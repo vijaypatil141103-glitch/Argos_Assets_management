@@ -1,0 +1,515 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Argos Watch - IT Asset Management System</title>
+<!-- External Libraries -->
+<script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+    @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap');
+    :root {
+        --primary: #4F46E5; --primary-hover: #4338CA; --sidebar-bg: #0B0F19;
+        --sidebar-hover: #1E293B; --bg-color: #F8FAFC; --card-bg: #FFFFFF;
+        --text-main: #0F172A; --text-muted: #64748B; --border-color: #E2E8F0;
+        --radius: 12px; --shadow-sm: 0 4px 6px -1px rgba(0, 0, 0, 0.02), 0 2px 4px -1px rgba(0, 0, 0, 0.02);
+        --shadow-md: 0 10px 15px -3px rgba(0, 0, 0, 0.05), 0 4px 6px -2px rgba(0, 0, 0, 0.02);
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Plus Jakarta Sans', system-ui, sans-serif; }
+    body { background-color: var(--bg-color); color: var(--text-main); display: flex; height: 100vh; overflow: hidden; font-size: 13.5px; }
+    
+    #login-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(11, 15, 25, 0.8); backdrop-filter: blur(8px); display: flex; align-items: center; justify-content: center; z-index: 999; }
+    .login-card { background: var(--card-bg); padding: 40px; border-radius: 20px; width: 100%; max-width: 420px; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25); border: 1px solid var(--border-color); }
+    
+    .sidebar { width: 270px; background: var(--sidebar-bg); color: #94A3B8; display: flex; flex-direction: column; border-right: 1px solid rgba(255,255,255,0.05); height: 100vh; position: fixed; z-index: 100; }
+    .sidebar-header { padding: 28px 24px; border-bottom: 1px solid rgba(255, 255, 255, 0.06); }
+    .sidebar ul { list-style: none; padding: 16px 12px; overflow-y: auto; flex-grow: 1; display: flex; flex-direction: column; gap: 4px; }
+    .sidebar ul li { padding: 11px 16px; border-radius: 8px; cursor: pointer; font-size: 13px; font-weight: 500; transition: all 0.2s ease; display: flex; align-items: center; gap: 12px; color: #94A3B8; }
+    .sidebar ul li:hover { background: rgba(255,255,255,0.04); color: #FFFFFF; }
+    .sidebar ul li.active { background: var(--primary); color: #FFFFFF; font-weight: 600; box-shadow: 0 4px 12px rgba(79, 70, 229, 0.35); }
+    
+    .main-wrapper { flex-grow: 1; display: flex; flex-direction: column; height: 100%; overflow: hidden; margin-left: 270px; }
+    .topbar { height: 70px; background: var(--card-bg); border-bottom: 1px solid var(--border-color); display: flex; align-items: center; justify-content: space-between; padding: 0 36px; box-shadow: var(--shadow-sm); }
+    .content-area { flex-grow: 1; overflow-y: auto; padding: 36px; }
+    .tab-content { display: none; animation: fadeIn 0.3s cubic-bezier(0.16, 1, 0.3, 1); }
+    .tab-content.active { display: block; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+    
+    .card { background: var(--card-bg); border-radius: var(--radius); border: 1px solid var(--border-color); padding: 28px; margin-bottom: 24px; box-shadow: var(--shadow-sm); transition: box-shadow 0.2s; }
+    .card:hover { box-shadow: var(--shadow-md); }
+    
+    .stats-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px; margin-bottom: 24px; }
+    .stat-card { background: var(--card-bg); padding: 22px; border-radius: var(--radius); border: 1px solid var(--border-color); cursor: pointer; transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1); box-shadow: var(--shadow-sm); }
+    .stat-card:hover { transform: translateY(-4px); border-color: var(--primary); box-shadow: var(--shadow-md); }
+    .stat-card h4 { font-size: 11px; color: var(--text-muted); margin-bottom: 6px; text-transform: uppercase; font-weight: 700; letter-spacing: 0.5px; }
+    .stat-card h2 { font-size: 24px; color: var(--text-main); font-weight: 700; }
+    
+    .table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+    .table th, .table td { padding: 16px 18px; text-align: left; border-bottom: 1px solid var(--border-color); font-size: 13px; }
+    .table th { background: #F8FAFC; color: #475569; font-weight: 700; text-transform: uppercase; font-size: 11px; letter-spacing: 0.5px; border-top: 1px solid var(--border-color); }
+    .table tbody tr { transition: background 0.15s; }
+    .table tbody tr:hover { background: #F8FAFC; }
+    
+    .form-control { width: 100%; padding: 11px 16px; border: 1px solid var(--border-color); border-radius: 8px; font-size: 13.5px; outline: none; background: #FFFFFF; color: var(--text-main); transition: all 0.2s; }
+    .form-control:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.12); }
+    
+    .btn, button { padding: 10px 20px; border: none; border-radius: 8px; cursor: pointer; font-size: 13px; font-weight: 600; background-color: var(--primary); color: #FFFFFF; transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1); box-shadow: 0 1px 2px rgba(0,0,0,0.05); }
+    .btn:hover, button:hover { background-color: var(--primary-hover); transform: translateY(-1px); box-shadow: 0 4px 12px rgba(79, 70, 229, 0.25); }
+    
+    .badge { padding: 5px 12px; border-radius: 20px; font-size: 11px; font-weight: 700; display: inline-flex; align-items: center; gap: 4px; letter-spacing: 0.3px; }
+    .badge-stock { background: #ECFDF5; color: #047857; border: 1px solid #A7F3D0; }
+    .badge-assigned { background: #EEF2FF; color: #4338CA; border: 1px solid #C7D2FE; }
+    .badge-alert { background: #FEF2F2; color: #DC2626; border: 1px solid #FECACA; }
+    .badge-scrapped { background: #0F172A; color: #F8FAFC; }
+    
+    .modal-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(11, 15, 25, 0.65); backdrop-filter: blur(4px); display: none; align-items: center; justify-content: center; z-index: 1000; }
+    .modal-card { background: var(--card-bg); padding: 32px; border-radius: 20px; width: 100%; max-width: 540px; max-height: 90vh; overflow-y: auto; border: 1px solid var(--border-color); box-shadow: 0 25px 50px -12px rgba(0,0,0,0.25); animation: scaleUp 0.25s cubic-bezier(0.16, 1, 0.3, 1); }
+    @keyframes scaleUp { from { opacity: 0; transform: scale(0.96); } to { opacity: 1; transform: scale(1); } }
+</style>
+</head>
+<body>
+<div id="login-overlay">
+        <div class="login-card">
+            <h2 style="font-size: 20px; font-weight: 700; color: #0F172A; margin-bottom: 6px;">Argos Watch IT</h2>
+            <p style="font-size: 12px; color: var(--text-muted); margin-bottom: 20px;">Login with authorized email & password</p>
+            <form onsubmit="handleCombinedLogin(event)" autocomplete="off">
+                <div style="margin-bottom: 16px;">
+                    <label style="font-size: 12px; font-weight: 600; display: block; margin-bottom: 6px;">Authorized Email</label>
+                    <input type="email" id="login-email-input" class="form-control" placeholder="admin@argoswatch.com" required style="width: 100%; padding: 10px; border-radius: 8px; border: 1px solid #CBD5E1;">
+                </div>
+                <div style="margin-bottom: 24px;">
+                    <label style="font-size: 12px; font-weight: 600; display: block; margin-bottom: 6px;">Password</label>
+                    <input type="password" id="login-pass-input" class="form-control" placeholder="••••••••" required style="width: 100%; padding: 10px; border-radius: 8px; border: 1px solid #CBD5E1;">
+                </div>
+                <button type="submit" class="btn" style="background: var(--sidebar-bg); color: #F8FAFC; width: 100%; padding: 12px; border-radius: 8px; border: none; font-weight: 600; cursor: pointer;">Login to System</button>
+            </form>
+        </div>
+    </div>
+<div class="sidebar" id="app-sidebar" style="display: none;">
+    <div class="sidebar-header">
+        <h2 style="font-size: 16px; font-weight: 700; color: #FFFFFF;">Argos Watch IT</h2>
+        <p style="font-size: 11px; color: #94A3B8; margin-top: 4px;">Enterprise Asset Management</p>
+    </div>
+    
+    <div style="padding: 12px 12px 0 12px;">
+        <button onclick="switchTab('dashboard')" style="width: 100%; background: #1E293B; color: #F8FAFC; border: 1px solid rgba(255,255,255,0.1); padding: 9px; border-radius: 8px; cursor: pointer; font-size: 12px; font-weight: 600;">&#8592; Back to Dashboard</button>
+    </div>
+
+    <ul>
+        <li class="active" onclick="switchTab('dashboard')">Dashboard</li>
+        <li onclick="switchTab('assets')">Assets Inventory</li>
+        <li onclick="switchTab('employees')">Employees & QR</li>
+        <li onclick="switchTab('assign')">Assign Asset</li>
+        <li onclick="switchTab('transfer')">Transfer Asset</li>
+        <li onclick="switchTab('return')">Return Asset</li>
+        <li onclick="switchTab('pc-service')">PC Monthly Service</li>
+        <li onclick="switchTab('requests')">Asset Requests <span id="req-badge" class="badge badge-alert" style="margin-left:auto; display:none;">0</span></li>
+        <li onclick="switchTab('scanner')">QR Scanner</li>
+        <li onclick="switchTab('history')">Audit Logs</li>
+        <li onclick="switchTab('settings')">Settings & Backup</li>
+    </ul>
+</div>
+
+<div class="main-wrapper" id="app-main-content" style="display: none;">
+    <div class="topbar">
+        <span id="current-date" style="font-size: 13px; font-weight: 500; color: var(--text-muted);"></span>
+        <div style="display: flex; gap: 12px; align-items: center;">
+            <span id="logged-user-display" style="font-size: 12px; color: #334155; font-weight: 600;"></span>
+            <button class="btn" style="background: #F1F5F9; color: #0F172A; border: 1px solid var(--border-color);" onclick="switchTab('settings')">Settings</button>
+            <button class="btn" style="background: #EF4444; color: #FFFFFF;" onclick="logoutSystem()">Logout</button>
+        </div>
+    </div>
+    <div class="content-area">
+        <div id="tab-dashboard" class="tab-content active">
+    <div class="stats-grid">
+        <div class="stat-card" onclick="showDashboardStatModal('total')"><h4>Total Assets</h4><h2 id="stat-total">0</h2></div>
+        <div class="stat-card" onclick="showDashboardStatModal('assigned')"><h4>Assigned Assets</h4><h2 id="stat-assigned">0</h2></div>
+        <div class="stat-card" onclick="showDashboardStatModal('stock')"><h4>Available Stock</h4><h2 id="stat-stock">0</h2></div>
+        <div class="stat-card" onclick="showDashboardStatModal('repair')" style="background: #FEF3C7; border-color: #FDE68A;"><h3 style="color: #92400E; font-size:11px;">Under Repair</h3><h2 id="stat-repair" style="color: #92400E;">0</h2></div>
+        <div class="stat-card" onclick="showDashboardStatModal('damaged-office')" style="background: #FEF2F2; border-color: #FCA5A5;"><h3 style="color: #991B1B; font-size:11px;">Damaged (Office)</h3><h2 id="stat-damaged-office" style="color: #7F1D1D;">0</h2></div>
+        <div class="stat-card" onclick="showDashboardStatModal('scrapped')" style="background: #F1F5F9;"><h3 style="color: #334155; font-size:11px;">Scrapped</h3><h2 id="stat-scrapped" style="color: #334155;">0</h2></div>
+        <div class="stat-card" onclick="showDashboardStatModal('employees')"><h4>Employees</h4><h2 id="stat-employees">0</h2></div>
+        <div class="stat-card" style="background: #EFF6FF; border-color: #BFDBFE;"><h3 style="color: #1D4ED8; font-size:11px;">Total Valuation</h3><h2 id="stat-valuation" style="color: #1D4ED8; font-size: 20px;">₹0</h2></div>
+    </div>
+    
+    <!-- Warranty Expiry Alert Banner -->
+    <div id="warranty-alert-banner" class="card" style="display:none; background: #FEF3C7; border-color: #FDE68A; margin-bottom: 20px;">
+        <h4 style="color: #92400E; margin-bottom: 6px; font-size: 13px;">🛡️ Warranty Expiry Alerts</h4>
+        <div id="warranty-alert-text" style="font-size: 12px; color: #78350F;"></div>
+    </div>
+
+    <div id="alert-banner" class="card" style="display:none; background: #FEF2F2; border-color: #FECACA;">
+        <h4 style="color: #DC2626; margin-bottom: 6px; font-size: 13px;">⚠️ System Alerts & Notifications</h4>
+        <p id="alert-banner-text" style="font-size: 12px; color: #7F1D1D;"></p>
+    </div>
+
+    <div class="card">
+        <h4 style="font-size: 14px; font-weight: 600; margin-bottom: 12px;">Quick Actions</h4>
+        <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+            <button class="btn" onclick="openAssetModal()">+ Add Asset</button>
+            <button class="btn" onclick="openEmployeeModal()">+ Add Employee</button>
+            <button class="btn" style="background: #0284C7;" onclick="switchTab('assign')">Assign Asset</button>
+            <button class="btn" style="background: #0D9488;" onclick="switchTab('transfer')">Transfer Asset</button>
+            <button class="btn" style="background: #D97706;" onclick="switchTab('requests')">View Requests</button>
+            <button class="btn" style="background: #4F46E5;" onclick="switchTab('scanner')">Scan QR</button>
+            <button class="btn" style="background: #0284C7; color: #FFF;" onclick="openConsumablesModal()">📦 Consumables Stock</button>
+        </div>
+    </div>
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-top: 24px;">
+        <div class="card"><h3 style="margin-bottom: 16px; font-size: 15px; font-weight: 600;">Category Breakdown</h3><div style="position: relative; height: 240px;"><canvas id="categoryChart"></canvas></div></div>
+        <div class="card"><h3 style="margin-bottom: 16px; font-size: 15px; font-weight: 600;">Status Overview</h3><div style="position: relative; height: 240px;"><canvas id="statusChart"></canvas></div></div>
+    </div>
+    <div class="card" style="margin-top: 24px;">
+        <h3 style="margin-bottom: 16px; font-size: 15px; font-weight: 600;">Detailed Asset Item Inventory Breakdown</h3>
+        <table class="table"><thead><tr><th>Category</th><th>Total Stock</th><th>Assigned</th><th>Available in Stock</th><th>Under Repair / Scrapped</th></tr></thead><tbody id="dashboard-breakdown-tbody"></tbody></table>
+    </div>
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-top: 24px;">
+        <div class="card"><h3 style="margin-bottom: 16px; font-size: 15px; font-weight: 600;">Department Breakdown</h3><div id="department-breakdown-list"></div></div>
+        <div class="card"><h3 style="margin-bottom: 16px; font-size: 15px; font-weight: 600;">Recent Activity Logs</h3><table class="table" style="margin-top: 0;"><thead><tr><th>Time</th><th>Action</th><th>Details</th></tr></thead><tbody id="dashboard-recent-logs"></tbody></table></div>
+    </div>
+</div>
+        <div id="tab-assets" class="tab-content">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px;">
+        <h3 style="font-size: 18px; font-weight: 700;">Hardware Assets Inventory</h3>
+        <div style="display: flex; gap: 10px;">
+            <button class="btn" style="background: #7C3AED;" onclick="openBulkImportModal()">📥 Import CSV</button>
+            <button class="btn" style="background: #0D9488;" onclick="exportAssetsCSV()">Export CSV</button>
+            <button class="btn" onclick="openAssetModal()">+ Add Asset</button>
+        </div>
+    </div> 
+    
+            <div class="card">
+                <div style="display: flex; gap: 12px; margin-bottom: 16px;">
+                    <input type="text" id="asset-search-input" class="form-control" placeholder="Search assets..." oninput="filterAssetsTable()">
+                    <select id="asset-filter-category" class="form-control" style="max-width: 200px;" onchange="filterAssetsTable()">
+                        <option value="">All Categories</option><option value="Laptop">Laptop</option><option value="Monitor">Monitor</option><option value="Keyboard">Keyboard</option><option value="Mouse">Mouse</option><option value="Desktop PC">Desktop PC</option>
+                    </select>
+                    <select id="asset-filter-status" class="form-control" style="max-width: 180px;" onchange="filterAssetsTable()">
+                        <option value="">All Status</option><option value="In Stock">In Stock</option><option value="Assigned">Assigned</option><option value="Under Repair">Under Repair</option><option value="Scrapped">Scrapped</option>
+                    </select>
+                </div>
+                <table class="table"><thead><tr><th>Serial / Tag</th><th>Category</th><th>Purchase & Warranty</th><th>Vendor & Cost</th><th>Status</th><th>Action</th></tr></thead><tbody id="assets-table-body"></tbody></table>
+            </div>
+        </div>
+
+        <div id="tab-employees" class="tab-content">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px;">
+                <h3 style="font-size: 18px; font-weight: 700;">Registered Employees & Assigned Assets</h3>
+                <button class="btn" onclick="openEmployeeModal()">+ Add Employee</button>
+            </div>
+            <div class="card">
+                <input type="text" class="form-control" placeholder="Search employees..." oninput="renderEmployeesTable(this.value)" style="margin-bottom: 16px;">
+                <table class="table"><thead><tr><th>Emp ID</th><th>Name</th><th>Department</th><th>Assigned Assets</th><th>QR & Challan</th><th>Action</th></tr></thead><tbody id="employees-table-body"></tbody></table>
+            </div>
+        </div>
+
+        <div id="tab-assign" class="tab-content">
+            <div class="card" style="max-width: 600px; margin: 0 auto;">
+                <h3 style="font-size: 16px; font-weight: 600; margin-bottom: 16px;">Assign Hardware Asset to Employee</h3>
+                <form onsubmit="assignAsset(event)" style="margin-top: 15px;">
+                    <div style="margin-bottom: 16px;"><label style="font-size: 12px; font-weight: 600; display: block; margin-bottom: 6px;">Select Stock Asset</label>
+                        <div style="display: flex; gap: 8px;"><input type="text" id="modal-assign-search" class="form-control" list="stock-assets-datalist" placeholder="Search asset..." required oninput="populateStockDatalist()"><button type="button" class="btn" onclick="openSelectAssetPopup()">Browse</button></div>
+                        <datalist id="stock-assets-datalist"></datalist>
+                    </div>
+                    <div style="margin-bottom: 16px;"><label style="font-size: 12px; font-weight: 600; display: block; margin-bottom: 6px;">Select Employee</label>
+                        <div style="display: flex; gap: 8px;"><input type="text" id="modal-assign-emp-search" class="form-control" list="assign-employees-datalist" placeholder="Search employee..." required oninput="populateEmployeeDatalist()"><button type="button" class="btn" onclick="openSelectEmployeePopup()">Browse</button></div>
+                        <datalist id="assign-employees-datalist"></datalist>
+                    </div>
+                    <div style="margin-bottom: 20px;"><label style="font-size: 12px; font-weight: 600; display: block; margin-bottom: 6px;">Assignment Reason</label><input type="text" id="modal-assign-reason" class="form-control" placeholder="Reason..."></div>
+                    <button type="submit" class="btn" style="width: 100%; padding: 12px;">Assign Asset</button>
+                </form>
+            </div>
+        </div>
+        <div id="tab-transfer" class="tab-content">
+            <div class="card" style="max-width: 600px; margin: 0 auto;">
+                <h3 style="font-size: 16px; font-weight: 600; margin-bottom: 16px;">Transfer Asset</h3>
+                <form onsubmit="transferAsset(event)" style="margin-top: 15px;">
+                    <div style="margin-bottom: 16px;"><label style="font-size: 12px; font-weight: 600; display: block; margin-bottom: 6px;">Select Assigned Asset</label>
+                        <div style="display: flex; gap: 8px;"><input type="text" id="transfer-asset-search" class="form-control" list="assigned-assets-datalist" placeholder="Search assigned asset..." required oninput="updateTransferOldEmployee()"><button type="button" class="btn" onclick="openSelectAssignedAssetPopup('transfer')">Browse</button></div>
+                        <datalist id="assigned-assets-datalist"></datalist>
+                    </div>
+                    <div style="margin-bottom: 16px;"><label style="font-size: 12px; font-weight: 600; display: block; margin-bottom: 6px;">Current Holder (Old Employee)</label><input type="text" id="transfer-old-emp" class="form-control" placeholder="Auto-detected..." readonly style="background: #F1F5F9; color: var(--text-muted);"></div>
+                    <div style="margin-bottom: 16px;"><label style="font-size: 12px; font-weight: 600; display: block; margin-bottom: 6px;">Select New Employee</label>
+                        <div style="display: flex; gap: 8px;"><input type="text" id="transfer-emp-select" class="form-control" list="transfer-employees-datalist" placeholder="Search new employee..." required oninput="populateTransferEmployeeDatalist()"><button type="button" class="btn" onclick="openSelectTransferEmployeePopup()">Browse</button></div>
+                        <datalist id="transfer-employees-datalist"></datalist>
+                    </div>
+                    <div style="margin-bottom: 20px;"><label style="font-size: 12px; font-weight: 600; display: block; margin-bottom: 6px;">Transfer Reason</label><input type="text" id="transfer-reason" class="form-control" placeholder="Reason..." required></div>
+                    <button type="submit" class="btn" style="width: 100%; padding: 12px;">Transfer Asset</button>
+                </form>
+            </div>
+        </div>
+
+        <div id="tab-return" class="tab-content">
+            <div class="card" style="max-width: 600px; margin: 0 auto;">
+                <h3 style="font-size: 16px; font-weight: 600; margin-bottom: 16px;">Return Asset to Stock</h3>
+                <form onsubmit="returnAsset(event)" style="margin-top: 15px;">
+                    <div style="margin-bottom: 16px;"><label style="font-size: 12px; font-weight: 600; display: block; margin-bottom: 6px;">Select Assigned Asset</label>
+                        <div style="display: flex; gap: 8px;"><input type="text" id="return-asset-search" class="form-control" list="return-assets-datalist" placeholder="Search assigned asset..." required oninput="updateReturnHolder()"><button type="button" class="btn" onclick="openSelectAssignedAssetPopup('return')">Browse</button></div>
+                        <datalist id="return-assets-datalist"></datalist>
+                    </div>
+                    <div style="margin-bottom: 16px;"><label style="font-size: 12px; font-weight: 600; display: block; margin-bottom: 6px;">Current Holder</label><input type="text" id="return-holder-emp" class="form-control" placeholder="Auto-detected..." readonly style="background: #F1F5F9; color: var(--text-muted);"></div>
+                    <div style="margin-bottom: 20px;"><label style="font-size: 12px; font-weight: 600; display: block; margin-bottom: 6px;">Return Reason</label><input type="text" id="return-reason" class="form-control" placeholder="Reason..." required></div>
+                    <button type="submit" class="btn" style="width: 100%; padding: 12px; background: #0D9488;">Return to Stock</button>
+                </form>
+            </div>
+        </div>
+
+        <div id="tab-pc-service" class="tab-content">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px;">
+                <h3 style="font-size: 18px; font-weight: 700;">PC Maintenance Service Logs</h3>
+                <div style="display: flex; gap: 10px;"><button class="btn" style="background: #0D9488;" onclick="downloadServiceReportPDF()">Download PDF</button><button class="btn" onclick="openServiceModal()">+ Log Service</button></div>
+            </div>
+            <div class="card"><table class="table"><thead><tr><th>Serial</th><th>Date</th><th>Technician</th><th>Tasks</th><th>Status</th></tr></thead><tbody id="service-table-body"></tbody></table></div>
+        </div>
+
+        <div id="tab-requests" class="tab-content">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px;">
+                <h3 style="font-size: 18px; font-weight: 700;">Employee Asset Requests</h3><button class="btn" onclick="openRequestModal()">+ Submit Request</button>
+            </div>
+            <div class="card"><table class="table"><thead><tr><th>Date</th><th>Employee</th><th>Details</th><th>Status</th><th>Action</th></tr></thead><tbody id="requests-table-body"></tbody></table></div>
+        </div>
+
+        <div id="tab-scanner" class="tab-content">
+            <div class="card" style="max-width: 600px; margin: 0 auto; text-align: center; padding: 30px;">
+                <h3 style="font-size: 18px; font-weight: 700; margin-bottom: 10px;">QR Code Scanner Utility</h3>
+                <div id="reader" style="width: 100%; max-width: 400px; margin: 20px auto; border-radius: 8px; border: 2px dashed var(--border-color);"></div>
+                <div style="margin-top: 15px; display: flex; justify-content: center; gap: 10px;"><button class="btn" onclick="startQrScanner()">Start Camera</button><button class="btn" style="background: #EF4444;" onclick="stopQrScanner()">Stop Camera</button></div>
+                <div id="scan-result-box" style="margin-top: 20px; padding: 15px; background: #F1F5F9; border-radius: 8px; text-align: left; display: none;"><h4 style="font-size: 13px; font-weight: 600;">Scanned Details:</h4><p id="scanned-asset-info" style="font-size: 13px;"></p></div>
+            </div>
+        </div>
+        <div id="tab-history" class="tab-content">
+            <div class="card">
+                <div style="display: flex; gap: 10px; margin-bottom: 15px; justify-content: space-between; align-items: center;">
+                    <h3 style="font-size: 18px; font-weight: 700;">Audit Logs</h3>
+                    <div style="display: flex; gap: 10px;">
+                        <select id="audit-category-filter" class="form-control" style="width: 180px;" onchange="renderAuditLogs()">
+                            <option value="">All Categories</option>
+                            <option value="Laptop">Laptop</option>
+                            <option value="Desktop PC">Desktop PC</option>
+                            <option value="Monitor">Monitor</option>
+                            <option value="Keyboard">Keyboard</option>
+                            <option value="Mouse">Mouse</option>
+                            <option value="Printer">Printer</option>
+                            <option value="Other">Other</option>
+                        </select>
+                        <input type="text" id="audit-search-input" class="form-control" placeholder="Search audit logs..." style="width: 220px;" onkeyup="renderAuditLogs()">
+                    </div>
+                </div>
+                <table class="table"><thead><tr><th>Time</th><th>Action</th><th>Details</th></tr></thead><tbody id="audit-logs-body"></tbody></table>
+            </div>
+        </div>
+
+        <div id="tab-settings" class="tab-content">
+            <div class="card" style="max-width: 600px; margin: 0 auto;">
+                <h3 style="font-size: 18px; font-weight: 700; margin-bottom: 20px;">Manager Settings & Security</h3>
+                <form onsubmit="changeAdminPassword(event)" style="margin-bottom: 24px;">
+                    <div style="margin-bottom: 12px;"><label style="font-size: 12px; font-weight: 600;">Current Password</label><input type="password" id="set-curr-pass" class="form-control" required></div>
+                    <div style="margin-bottom: 12px;"><label style="font-size: 12px; font-weight: 600;">New Password</label><input type="password" id="set-new-pass" class="form-control" required></div>
+                    <button type="submit" class="btn">Update Password</button>
+                </form>
+                <form onsubmit="addAccessEmail(event)" style="display: flex; gap: 10px; margin-bottom: 16px;"><input type="email" id="new-access-email" class="form-control" placeholder="email@argoswatch.com" required><button type="submit" class="btn" style="background: #0D9488;">Add</button></form>
+                <div id="access-emails-list" style="display: flex; flex-direction: column; gap: 8px; margin-bottom: 24px;"></div>
+                <button class="btn" style="background: var(--sidebar-bg); color: #F8FAFC; width: 100%; padding: 12px;" onclick="downloadSystemBackup()">Download Complete JSON Backup</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modals -->
+<div id="printModal" class="modal-overlay"><div class="modal-card"><div id="print-modal-body"></div><div style="margin-top: 20px; text-align: right;"><button class="btn" style="background: #64748B;" onclick="closePrintModal()">Close</button></div></div></div>
+<div id="employeeQRModal" class="modal-overlay"><div class="modal-card"><div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;"><h3 id="employee-qr-title" style="font-size: 16px; font-weight: 700; margin: 0;">Employee QR</h3><button onclick="closeEmployeeQRModal()" style="background: none; border: none; font-size: 18px; cursor: pointer; color: #64748B;">&times;</button></div><div id="employee-qr-display-area"></div><div style="margin-top: 20px; text-align: right;"><button class="btn" style="background: #334155;" onclick="closeEmployeeQRModal()">Close</button></div></div></div>
+<div id="employeeChallanModal" class="modal-overlay"><div class="modal-card" style="max-width: 600px;"><div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; border-bottom: 1px solid var(--border-color); padding-bottom: 10px;"><h3 id="employee-challan-title" style="font-size: 16px; font-weight: 700; color: #0F172A; margin: 0;">IT Asset Handover Challan</h3><button onclick="closeEmployeeChallanModal()" style="background: none; border: none; font-size: 20px; cursor: pointer; color: #64748B;">&times;</button></div><div id="employee-challan-body" style="font-size: 13px; line-height: 1.6; padding: 10px 0;"></div></div></div>
+<div id="selectAssetModal" class="modal-overlay"><div class="modal-card"><h3 style="font-size: 16px; font-weight: 600; margin-bottom: 10px;">Select Asset</h3><div id="popup-asset-list" style="display: flex; flex-direction: column; gap: 8px; max-height: 300px; overflow-y: auto;"></div><div style="margin-top: 15px; text-align: right;"><button class="btn" style="background: #64748B;" onclick="closeSelectAssetPopup()">Close</button></div></div></div>
+<div id="selectEmployeeModal" class="modal-overlay"><div class="modal-card"><h3 style="font-size: 16px; font-weight: 600; margin-bottom: 10px;">Select Employee</h3><div id="popup-employee-list" style="display: flex; flex-direction: column; gap: 8px; max-height: 300px; overflow-y: auto;"></div><div style="margin-top: 15px; text-align: right;"><button class="btn" style="background: #64748B;" onclick="closeSelectEmployeePopup()">Close</button></div></div></div>
+<div id="selectAssignedAssetModal" class="modal-overlay"><div class="modal-card"><h3 id="assigned-popup-title" style="font-size: 16px; font-weight: 600; margin-bottom: 10px;">Select Assigned Asset</h3><div id="popup-assigned-asset-list" style="display: flex; flex-direction: column; gap: 8px; max-height: 300px; overflow-y: auto;"></div><div style="margin-top: 15px; text-align: right;"><button class="btn" style="background: #64748B;" onclick="closeSelectAssignedAssetPopup()">Close</button></div></div></div>
+
+<div id="assetModal" class="modal-overlay">
+    <div class="modal-card">
+        <h3 style="font-size: 16px; font-weight: 600; margin-bottom: 16px;">Add New Hardware Asset</h3>
+        <form onsubmit="addAssetFromModal(event)">
+            <div style="margin-bottom: 12px;">
+                <label style="font-size: 12px; font-weight: 600;">Category</label>
+                <div style="display: flex; gap: 8px;">
+                    <select id="modal-asset-category" class="form-control" onchange="checkNewCategory(this); generateAutoSerial(); toggleAssetSpecFields();">
+                        <option value="Laptop">Laptop</option>
+                        <option value="Monitor">Monitor</option>
+                        <option value="Keyboard">Keyboard</option>
+                        <option value="Mouse">Mouse</option>
+                        <option value="Desktop PC">Desktop PC</option>
+                        <option value="Printer">Printer</option>
+                        <option value="OTHER_NEW">+ Add New Category...</option>
+                    </select>
+                </div>
+            </div>
+            <div style="margin-bottom: 12px;"><label style="font-size: 12px; font-weight: 600;">Serial (Auto)</label><input type="text" id="modal-asset-serial" class="form-control" required readonly></div>
+            <div style="margin-bottom: 12px;"><label style="font-size: 12px; font-weight: 600;">Model Name</label><input type="text" id="modal-asset-model" class="form-control" placeholder="e.g. ThinkPad E14"></div>
+            <div id="pc-spec-fields" style="display: none; background: #F8FAFC; padding: 12px; border-radius: 8px; border: 1px solid var(--border-color); margin-bottom: 12px;">
+                <div style="margin-bottom: 8px;"><label style="font-size: 11px; font-weight: 600;">RAM</label><input type="text" id="modal-asset-ram" class="form-control" placeholder="e.g. 16GB DDR4"></div>
+                <div style="margin-bottom: 8px;"><label style="font-size: 11px; font-weight: 600;">Processor / Generation</label><input type="text" id="modal-asset-processor" class="form-control" placeholder="e.g. Core i5 12th Gen"></div>
+                <div><label style="font-size: 11px; font-weight: 600;">Graphics Card</label><input type="text" id="modal-asset-graphics" class="form-control" placeholder="e.g. NVIDIA RTX 3050"></div>
+            </div>
+            <div style="margin-bottom: 12px;"><label style="font-size: 12px; font-weight: 600;">Status</label><select id="modal-asset-status" class="form-control"><option value="In Stock">In Stock</option><option value="Assigned">Assigned</option><option value="Under Repair">Under Repair</option><option value="Scrapped">Scrapped</option></select></div>
+            <div style="margin-bottom: 12px;"><label style="font-size: 12px; font-weight: 600;">Purchase Date</label><input type="date" id="modal-asset-date" class="form-control" required></div>
+            <div style="margin-bottom: 12px;"><label style="font-size: 12px; font-weight: 600;">Warranty Expiry Date</label><input type="date" id="modal-asset-warranty" class="form-control" required></div>
+            <div style="margin-bottom: 12px;"><label style="font-size: 12px; font-weight: 600;">Vendor</label><input type="text" id="modal-asset-vendor" class="form-control" placeholder="Vendor"></div>
+            <div style="margin-bottom: 12px;"><label style="font-size: 12px; font-weight: 600;">Cost (₹)</label><input type="number" id="modal-asset-cost" class="form-control" value="0"></div>
+            <div style="margin-bottom: 12px;"><label style="font-size: 12px; font-weight: 600;">Invoice Details & PDF Upload</label><input type="text" id="modal-asset-invoice-no" class="form-control" placeholder="Invoice Number..." style="margin-bottom:6px;"><input type="file" id="modal-asset-invoice-pdf" accept=".pdf" class="form-control" style="padding: 6px;"></div>
+            <div style="display: flex; gap: 10px; justify-content: flex-end;"><button type="button" class="btn" style="background: #64748B;" onclick="closeAssetModal()">Cancel</button><button type="submit" class="btn">Save Asset</button></div>
+        </form>
+    </div>
+</div>
+
+<div id="employeeModal" class="modal-overlay">
+    <div class="modal-card">
+        <h3 style="font-size: 16px; font-weight: 600; margin-bottom: 16px;">Add Employee</h3>
+        <form onsubmit="addEmployeeFromModal(event)">
+            <div style="margin-bottom: 12px;"><label style="font-size: 12px; font-weight: 600;">ID</label><input type="text" id="modal-emp-id" class="form-control" required></div>
+            <div style="margin-bottom: 12px;"><label style="font-size: 12px; font-weight: 600;">Name</label><input type="text" id="modal-emp-name" class="form-control" required></div>
+            <div style="margin-bottom: 12px;"><label style="font-size: 12px; font-weight: 600;">Email</label><input type="email" id="modal-emp-email" class="form-control" required></div>
+            <div style="margin-bottom: 20px;"><label style="font-size: 12px; font-weight: 600;">Department</label><input type="text" id="modal-emp-dept" class="form-control" required></div>
+            <div style="display: flex; gap: 10px; justify-content: flex-end;"><button type="button" class="btn" style="background: #64748B;" onclick="closeEmployeeModal()">Cancel</button><button type="submit" class="btn">Save</button></div>
+        </form>
+    </div>
+</div>
+
+<div id="employeeDetailModal" class="modal-overlay">
+    <div class="modal-card"><h3 id="emp-detail-title" style="font-size: 16px; font-weight: 600; margin-bottom: 10px;">Employee Profile</h3><div id="emp-detail-content" style="margin-top: 15px; font-size: 13px; line-height: 1.6;"></div><div style="display:flex; justify-content:flex-end; gap:10px; margin-top:20px;"><button type="button" class="btn" style="background:#64748B;" onclick="closeEmployeeDetailModal()">Close</button></div></div>
+</div>
+
+<div id="assetDetailModal" class="modal-overlay">
+    <div class="modal-card"><h3 id="asset-detail-title" style="font-size: 16px; font-weight: 600; margin-bottom: 10px;">Asset Details</h3><div id="asset-detail-content" style="margin-top: 15px; font-size: 13px; line-height: 1.6;"></div><div style="display:flex; justify-content:flex-end; gap:10px; margin-top:20px;"><button type="button" class="btn" style="background:#64748B;" onclick="closeAssetDetailModal()">Close</button></div></div>
+</div>
+
+<div id="dashboardPopupModal" class="modal-overlay">
+    <div class="modal-card"><h3 id="dashboard-popup-title" style="font-size: 16px; font-weight: 600; margin-bottom: 10px;">Details Breakdown</h3><div id="dashboard-popup-content" style="margin-top: 15px; font-size: 13px; line-height: 1.6; max-height:350px; overflow-y:auto;"></div><div style="display:flex; justify-content:flex-end; gap:10px; margin-top:20px;"><button type="button" class="btn" style="background:#64748B;" onclick="closeDashboardPopupModal()">Close</button></div></div>
+</div>
+
+<div id="serviceModal" class="modal-overlay">
+    <div class="modal-card">
+        <h3 style="font-size: 16px; font-weight: 600; margin-bottom: 16px;">Log PC Monthly Service</h3>
+        <form onsubmit="handleSaveService(event)">
+            <div style="margin-bottom: 12px;"><label style="font-size: 12px; font-weight: 600;">Asset Serial</label><input type="text" id="service-asset-select" class="form-control" placeholder="e.g. ARG-LAP-001" required></div>
+            <div style="margin-bottom: 12px;"><label style="font-size: 12px; font-weight: 600;">Technician Name</label><input type="text" id="service-tech" class="form-control" required></div>
+            <div style="margin-bottom: 16px;"><label style="font-size: 12px; font-weight: 600;">Tasks Performed</label><textarea id="service-tasks" class="form-control" rows="3" placeholder="Antivirus check, dusting, updates..." required></textarea></div>
+            <div style="display: flex; gap: 10px; justify-content: flex-end;"><button type="button" class="btn" style="background: #64748B;" onclick="closeServiceModal()">Cancel</button><button type="submit" class="btn">Save Service Log</button></div>
+        </form>
+    </div>
+</div>
+
+<div id="requestModal" class="modal-overlay">
+    <div class="modal-card">
+        <h3 style="font-size: 16px; font-weight: 600; margin-bottom: 16px;">Submit Asset Request</h3>
+        <form onsubmit="submitAssetRequest(event)">
+            <div style="margin-bottom: 12px;"><label style="font-size: 12px; font-weight: 600;">Employee ID</label><input type="text" id="req-emp-id" class="form-control" required></div>
+            <div style="margin-bottom: 12px;"><label style="font-size: 12px; font-weight: 600;">Employee Name</label><input type="text" id="req-emp-name" class="form-control" required></div>
+            <div style="margin-bottom: 16px;"><label style="font-size: 12px; font-weight: 600;">Request Details</label><textarea id="req-details" class="form-control" rows="3" placeholder="Requirement description..." required></textarea></div>
+            <div style="display: flex; gap: 10px; justify-content: flex-end;"><button type="button" class="btn" style="background: #64748B;" onclick="closeRequestModal()">Cancel</button><button type="submit" class="btn">Submit</button></div>
+        </form>
+    </div>
+</div>
+<!-- Bulk Import CSV Modal -->
+<div id="bulkImportModal" class="modal-overlay" style="display:none;">
+    <div class="modal-card" style="max-width: 500px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+            <h3 style="font-size: 16px; font-weight: 600;">📥 Bulk Import Assets via CSV</h3>
+            <button onclick="closeBulkImportModal()" style="background:none; border:none; font-size:18px; cursor:pointer;">✕</button>
+        </div>
+        <p style="font-size: 12px; color: #64748B; margin-bottom: 12px;">
+            Upload a CSV file with columns: <strong>serial, category, status, date, vendor, cost, model, warrantyDate</strong>
+        </p>
+        <div style="margin-bottom: 16px;">
+            <input type="file" id="csvFileInput" accept=".csv" class="form-control">
+        </div>
+        <div style="display: flex; justify-content: flex-end; gap: 10px;">
+            <button class="btn" style="background: #64748B;" onclick="closeBulkImportModal()">Cancel</button>
+            <button class="btn" onclick="processCSVImport()">Upload & Import</button>
+        </div>
+    </div>
+</div>
+
+<!-- Asset Maintenance & Repair Modal -->
+<div id="maintenanceModal" class="modal-overlay" style="display:none;">
+    <div class="modal-card" style="max-width: 600px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+            <h3 style="font-size: 16px; font-weight: 600;">🛠️ Asset Maintenance & Repair Timeline</h3>
+            <button onclick="closeMaintenanceModal()" style="background:none; border:none; font-size:18px; cursor:pointer;">✕</button>
+        </div>
+        <div style="margin-bottom: 16px;">
+            <p id="maintAssetInfo" style="font-size: 13px; color: #64748B; margin-bottom: 10px;"></p>
+            <div style="background: #F8FAFC; padding: 12px; border-radius: 6px; margin-bottom: 14px;">
+                <h4 style="font-size: 13px; font-weight: 600; margin-bottom: 8px;">Log New Repair / Service</h4>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 8px;">
+                    <input type="date" id="maintDate" class="form-control">
+                    <input type="text" id="maintCost" placeholder="Repair Cost (₹)" class="form-control">
+                </div>
+                <textarea id="maintIssue" placeholder="Describe issue / maintenance work done..." class="form-control" style="margin-bottom: 8px; width: 100%; height: 60px;"></textarea>
+                <button class="btn" style="background: #0284C7; width: 100%;" onclick="saveMaintenanceLog()">Add Repair Log</button>
+            </div>
+            <h4 style="font-size: 13px; font-weight: 600; margin-bottom: 8px;">Repair History Timeline</h4>
+            <div id="maintTimelineList" style="max-height: 200px; overflow-y: auto; border: 1px solid #E2E8F0; border-radius: 6px; padding: 10px;">
+                <!-- Timeline items will load here -->
+            </div>
+        </div>
+        <div style="display: flex; justify-content: flex-end;">
+            <button class="btn" style="background: #64748B;" onclick="closeMaintenanceModal()">Close</button>
+        </div>
+    </div>
+</div>
+
+<!-- Consumables & Accessories Stock Modal -->
+<div id="consumablesModal" class="modal-overlay" style="display:none;">
+    <div class="modal-card" style="max-width: 650px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+            <h3 style="font-size: 16px; font-weight: 600;">📦 Consumables & Accessories Stock</h3>
+            <button onclick="closeConsumablesModal()" style="background:none; border:none; font-size:18px; cursor:pointer;">✕</button>
+        </div>
+        <div style="margin-bottom: 16px;">
+            <!-- Add New Consumable Form -->
+            <div style="background: #F8FAFC; padding: 12px; border-radius: 6px; margin-bottom: 14px;">
+                <h4 style="font-size: 13px; font-weight: 600; margin-bottom: 8px;">Add New Consumable Item</h4>
+                <div style="display: grid; grid-template-columns: 2fr 1fr 1fr auto; gap: 8px; align-items: flex-end;">
+                    <input type="text" id="consName" placeholder="Item Name (e.g. Dell Keyboard)" class="form-control">
+                    <input type="number" id="consQty" placeholder="Qty" class="form-control">
+                    <input type="number" id="consMinQty" placeholder="Min Alert" class="form-control">
+                    <button class="btn" style="background: #0284C7; height: 38px;" onclick="addConsumableItem()">Add</button>
+                </div>
+            </div>
+            
+            <h4 style="font-size: 13px; font-weight: 600; margin-bottom: 8px;">Current Consumables Stock</h4>
+            <div style="max-height: 220px; overflow-y: auto; border: 1px solid #E2E8F0; border-radius: 6px;">
+                <table style="width: 100%; border-collapse: collapse; font-size: 12px;">
+                    <thead>
+                        <tr style="background: #F1F5F9; text-align: left; border-bottom: 1px solid #E2E8F0;">
+                            <th style="padding: 8px;">Item Name</th>
+                            <th style="padding: 8px;">Stock Qty</th>
+                            <th style="padding: 8px;">Min Alert</th>
+                            <th style="padding: 8px; text-align: center;">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="consumablesTableBody">
+                        <!-- Dynamic items will load here -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        <div style="display: flex; justify-content: flex-end;">
+            <button class="btn" style="background: #64748B;" onclick="closeConsumablesModal()">Close</button>
+        </div>
+    </div>
+</div>
+<!-- Asset History Modal -->
+<div id="assetHistoryModal" class="modal-overlay" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(11, 15, 25, 0.8); backdrop-filter: blur(8px); align-items: center; justify-content: center; z-index: 999;">
+    <div class="modal-card" style="background: #FFFFFF; padding: 32px; border-radius: 20px; width: 100%; max-width: 600px; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.1);">
+        <h3 id="history-modal-title" style="font-size: 18px; font-weight: 700; color: #0F172A; margin-bottom: 16px;">Asset History</h3>
+        <div id="history-modal-content" style="max-height: 350px; overflow-y: auto; margin-bottom: 20px; font-size: 13px; color: #334155;">
+            <!-- History list yahan dynamically aayegi -->
+        </div>
+        <button type="button" class="btn" onclick="closeAssetHistoryModal()" style="background: #0F172A; color: #F8FAFC; width: 100%; padding: 10px; border-radius: 8px; border: none; font-weight: 600; cursor: pointer;">Close</button>
+    </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
