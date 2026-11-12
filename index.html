@@ -8,6 +8,7 @@
 <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap');
     :root {
@@ -77,11 +78,11 @@
             <form onsubmit="handleCombinedLogin(event)" autocomplete="off">
                 <div style="margin-bottom: 16px;">
                     <label style="font-size: 12px; font-weight: 600; display: block; margin-bottom: 6px;">Authorized Email</label>
-                    <input type="email" id="login-email-input" class="form-control" placeholder="admin@argoswatch.com" required style="width: 100%; padding: 10px; border-radius: 8px; border: 1px solid #CBD5E1;">
+                    <input type="email" id="login-email-input" class="form-control" placeholder="admin@argoswatch.com" autocomplete="off" required>
                 </div>
                 <div style="margin-bottom: 24px;">
                     <label style="font-size: 12px; font-weight: 600; display: block; margin-bottom: 6px;">Password</label>
-                    <input type="password" id="login-pass-input" class="form-control" placeholder="••••••••" required style="width: 100%; padding: 10px; border-radius: 8px; border: 1px solid #CBD5E1;">
+                    <input type="password" id="login-pass-input" class="form-control" placeholder="••••••••" autocomplete="new-password" required>
                 </div>
                 <button type="submit" class="btn" style="background: var(--sidebar-bg); color: #F8FAFC; width: 100%; padding: 12px; border-radius: 8px; border: none; font-weight: 600; cursor: pointer;">Login to System</button>
             </form>
@@ -223,39 +224,88 @@
             </div>
         </div>
         <div id="tab-transfer" class="tab-content">
-            <div class="card" style="max-width: 600px; margin: 0 auto;">
-                <h3 style="font-size: 16px; font-weight: 600; margin-bottom: 16px;">Transfer Asset</h3>
-                <form onsubmit="transferAsset(event)" style="margin-top: 15px;">
-                    <div style="margin-bottom: 16px;"><label style="font-size: 12px; font-weight: 600; display: block; margin-bottom: 6px;">Select Assigned Asset</label>
-                        <div style="display: flex; gap: 8px;"><input type="text" id="transfer-asset-search" class="form-control" list="assigned-assets-datalist" placeholder="Search assigned asset..." required oninput="updateTransferOldEmployee()"><button type="button" class="btn" onclick="openSelectAssignedAssetPopup('transfer')">Browse</button></div>
-                        <datalist id="assigned-assets-datalist"></datalist>
-                    </div>
-                    <div style="margin-bottom: 16px;"><label style="font-size: 12px; font-weight: 600; display: block; margin-bottom: 6px;">Current Holder (Old Employee)</label><input type="text" id="transfer-old-emp" class="form-control" placeholder="Auto-detected..." readonly style="background: #F1F5F9; color: var(--text-muted);"></div>
-                    <div style="margin-bottom: 16px;"><label style="font-size: 12px; font-weight: 600; display: block; margin-bottom: 6px;">Select New Employee</label>
-                        <div style="display: flex; gap: 8px;"><input type="text" id="transfer-emp-select" class="form-control" list="transfer-employees-datalist" placeholder="Search new employee..." required oninput="populateTransferEmployeeDatalist()"><button type="button" class="btn" onclick="openSelectTransferEmployeePopup()">Browse</button></div>
-                        <datalist id="transfer-employees-datalist"></datalist>
-                    </div>
-                    <div style="margin-bottom: 20px;"><label style="font-size: 12px; font-weight: 600; display: block; margin-bottom: 6px;">Transfer Reason</label><input type="text" id="transfer-reason" class="form-control" placeholder="Reason..." required></div>
-                    <button type="submit" class="btn" style="width: 100%; padding: 12px;">Transfer Asset</button>
-                </form>
-            </div>
+    <div class="card" style="max-width: 600px; margin: 0 auto;">
+    <h3 style="font-size: 16px; font-weight: 600; margin-bottom: 16px;">Transfer Asset</h3>
+    <form onsubmit="transferAsset(event)" style="margin-top: 15px;">
+        
+        <!-- 1. Search Old Employee -->
+        <div style="margin-bottom: 16px; position: relative;">
+            <label style="font-size: 12px; font-weight: 600; display: block; margin-bottom: 6px;">Search Old Employee (Current Holder)</label>
+            <input type="text" id="search-old-employee" class="form-control" placeholder="Click or type to search old employee..." autocomplete="off" onfocus="openEmpDropdown('old')" oninput="filterEmpDropdown('old')">
+            <input type="hidden" id="selected-old-emp-id">
+            <div id="old-emp-custom-list" style="display: none; position: absolute; top: 100%; left: 0; right: 0; max-height: 200px; overflow-y: auto; background: #fff; border: 1px solid #cbd5e1; border-radius: 8px; z-index: 1000; box-shadow: 0 4px 12px rgba(0,0,0,0.12); margin-top: 4px;"></div>
         </div>
 
+        <!-- 2. Select Assigned Asset -->
+        <div style="margin-bottom: 16px;">
+            <label style="font-size: 12px; font-weight: 600; display: block; margin-bottom: 6px;">Select Assigned Asset</label>
+            <select id="select-assigned-asset-dropdown" class="form-control">
+                <option value="">First select an old employee...</option>
+            </select>
+        </div>
+
+        <!-- 3. Current Holder (Auto-detected) -->
+        <div style="margin-bottom: 16px;">
+            <label style="font-size: 12px; font-weight: 600; display: block; margin-bottom: 6px;">Current Holder (Old Employee)</label>
+            <input type="text" id="transfer-old-emp" class="form-control" readonly placeholder="Auto-detected..." style="background: #f8fafc;">
+        </div>
+
+        <!-- 4. Select New Employee -->
+        <div style="margin-bottom: 16px; position: relative;">
+            <label style="font-size: 12px; font-weight: 600; display: block; margin-bottom: 6px;">Select New Employee</label>
+            <input type="text" id="transfer-new-emp-select" class="form-control" placeholder="Click or type to search new employee..." autocomplete="off" onfocus="openEmpDropdown('new')" oninput="filterEmpDropdown('new')">
+            <input type="hidden" id="selected-new-emp-id">
+            <div id="new-emp-custom-list" style="display: none; position: absolute; top: 100%; left: 0; right: 0; max-height: 200px; overflow-y: auto; background: #fff; border: 1px solid #cbd5e1; border-radius: 8px; z-index: 1000; box-shadow: 0 4px 12px rgba(0,0,0,0.12); margin-top: 4px;"></div>
+        </div>
+
+        <!-- 5. Transfer Reason -->
+        <div style="margin-bottom: 20px;">
+            <label style="font-size: 12px; font-weight: 600; display: block; margin-bottom: 6px;">Transfer Reason (Optional)</label>
+            <input type="text" id="transfer-reason" class="form-control" placeholder="Reason...">
+        </div>
+
+        <button type="submit" class="btn" style="width: 100%; padding: 12px;">Transfer Asset</button>
+    </form>
+</div>
+</div>
         <div id="tab-return" class="tab-content">
             <div class="card" style="max-width: 600px; margin: 0 auto;">
-                <h3 style="font-size: 16px; font-weight: 600; margin-bottom: 16px;">Return Asset to Stock</h3>
-                <form onsubmit="returnAsset(event)" style="margin-top: 15px;">
-                    <div style="margin-bottom: 16px;"><label style="font-size: 12px; font-weight: 600; display: block; margin-bottom: 6px;">Select Assigned Asset</label>
-                        <div style="display: flex; gap: 8px;"><input type="text" id="return-asset-search" class="form-control" list="return-assets-datalist" placeholder="Search assigned asset..." required oninput="updateReturnHolder()"><button type="button" class="btn" onclick="openSelectAssignedAssetPopup('return')">Browse</button></div>
-                        <datalist id="return-assets-datalist"></datalist>
-                    </div>
-                    <div style="margin-bottom: 16px;"><label style="font-size: 12px; font-weight: 600; display: block; margin-bottom: 6px;">Current Holder</label><input type="text" id="return-holder-emp" class="form-control" placeholder="Auto-detected..." readonly style="background: #F1F5F9; color: var(--text-muted);"></div>
-                    <div style="margin-bottom: 20px;"><label style="font-size: 12px; font-weight: 600; display: block; margin-bottom: 6px;">Return Reason</label><input type="text" id="return-reason" class="form-control" placeholder="Reason..." required></div>
-                    <button type="submit" class="btn" style="width: 100%; padding: 12px; background: #0D9488;">Return to Stock</button>
-                </form>
-            </div>
+    <h3 style="font-size: 16px; font-weight: 600; margin-bottom: 16px;">Return Asset to Stock</h3>
+    <form onsubmit="returnAssetToStock(event)" style="margin-top: 15px;">
+        
+        <!-- 1. Search Employee for Return -->
+        <div style="margin-bottom: 16px; position: relative;">
+            <label style="font-size: 12px; font-weight: 600; display: block; margin-bottom: 6px;">Search Employee (Current Holder)</label>
+            <input type="text" id="return-employee-search" class="form-control" placeholder="Click or type to search employee..." autocomplete="off" onfocus="openReturnEmpDropdown()" oninput="filterReturnEmpDropdown()">
+            <input type="hidden" id="selected-return-emp-id">
+            <div id="return-emp-custom-list" style="display: none; position: absolute; top: 100%; left: 0; right: 0; max-height: 200px; overflow-y: auto; background: #fff; border: 1px solid #cbd5e1; border-radius: 8px; z-index: 1000; box-shadow: 0 4px 12px rgba(0,0,0,0.12); margin-top: 4px;"></div>
         </div>
 
+        <!-- 2. Select Assigned Asset / Return All Option -->
+        <div style="margin-bottom: 16px;">
+            <label style="font-size: 12px; font-weight: 600; display: block; margin-bottom: 6px;">Select Assigned Asset</label>
+            <select id="return-asset-dropdown" class="form-control">
+                <option value="">First select an employee...</option>
+            </select>
+        </div>
+
+        <!-- 3. Current Holder (Auto-detected) -->
+        <div style="margin-bottom: 16px;">
+            <label style="font-size: 12px; font-weight: 600; display: block; margin-bottom: 6px;">Current Holder</label>
+            <input type="text" id="return-current-holder" class="form-control" readonly placeholder="Auto-detected..." style="background: #f8fafc;">
+        </div>
+
+        <!-- 4. Return Reason -->
+        <div style="margin-bottom: 20px;">
+            <label style="font-size: 12px; font-weight: 600; display: block; margin-bottom: 6px;">Return Reason (Optional)</label>
+            <input type="text" id="return-reason" class="form-control" placeholder="Reason for return...">
+        </div>
+
+        <button type="submit" class="btn" style="width: 100%; padding: 12px; background: #0d9488;">Return to Stock</button>
+    </form>
+</div>
+</div>
+        
         <div id="tab-pc-service" class="tab-content">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px;">
                 <h3 style="font-size: 18px; font-weight: 700;">PC Maintenance Service Logs</h3>

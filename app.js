@@ -1,15 +1,13 @@
-// --- PART 1: Initialization & Navigation ---
-let assets = JSON.parse(localStorage.getItem('argos_assets')) || [
-    { serial: 'ARG-LAP-001', category: 'Laptop', status: 'Assigned', assignedTo: '10048', date: '2025-09-14', vendor: 'Dell Store', cost: 45000, model: 'ThinkPad E14', ram: '16GB', processor: 'Core i5', graphics: 'Intel Iris', invoiceNo: 'INV-101', invoicePdf: '', warrantyDate: '2026-12-31' },
-    { serial: 'ARG-MSE-001', category: 'Mouse', status: 'Assigned', assignedTo: '10008', date: '2025-09-14', vendor: 'Logitech', cost: 500, model: 'B170', invoiceNo: 'INV-102', invoicePdf: '', warrantyDate: '2026-11-15' },
-    { serial: 'ARG-MON-001', category: 'Monitor', status: 'In Stock', assignedTo: '', date: '2025-09-15', vendor: 'Samsung', cost: 12000, model: 'S24R350', invoiceNo: 'INV-103', invoicePdf: '', warrantyDate: '2027-01-10' },
-    { serial: 'ARG-KEY-001', category: 'Keyboard', status: 'Damaged (In Office)', assignedTo: '', date: '2025-09-15', vendor: 'Dell', cost: 800, model: 'KB216', invoiceNo: 'INV-104', invoicePdf: '', warrantyDate: '2026-10-20' }
-];
+// SUPABASE SAFE SETUP
+if (!window.mySupabase) {
+    window.mySupabase = window.supabase.createClient("https://ukuzqhevfpzsufomsalp.supabase.co", "sb_publishable_MJzNY_Jf5md4UxyRRxyo7g_3L0ULc8i");
+}
+const db = window.mySupabase;
 
-let employees = JSON.parse(localStorage.getItem('argos_employees')) || [
-    { id: '10048', name: 'Kaif', email: 'kaif@argoswatch.com', dept: 'IT Department', assigned: ['ARG-LAP-001'] },
-    { id: '10008', name: 'Muffy', email: 'muffy@argoswatch.com', dept: 'Inventory', assigned: ['ARG-MSE-001'] }
-];
+// --- PART 1: Initialization, State & Navigation ---
+
+let assets = [];
+let employees = []; 
 
 let assignmentHistory = JSON.parse(localStorage.getItem('argos_history')) || [];
 let serviceLogs = JSON.parse(localStorage.getItem('argos_service_logs')) || [];
@@ -21,27 +19,180 @@ if (!localStorage.getItem('argos_access_emails')) localStorage.setItem('argos_ac
 let adminPassword = localStorage.getItem('argos_admin_pass') || 'admin123';
 let accessEmails = JSON.parse(localStorage.getItem('argos_access_emails')) || ['admin@argoswatch.com', 'manager@argoswatch.com'];
 
-window.onload = function() {
-    const logged = sessionStorage.getItem('argos_logged_user');
-    if (logged) { 
-        showDashboardApp(); 
-    } else { 
-        sessionStorage.removeItem('argos_logged_user');
-        showLoginScreen(); 
+// Supabase se Live Assets Fetch karne ka async function
+async function fetchAssetsFromSupabase() {
+    try {
+        const { data, error } = await db.from('assets').select('*');
+        if (error) {
+            console.error("Supabase error fetching assets:", error);
+            return;
+        }
+        
+        assets = (data || []).map(item => {
+            let rawStatus = item.status ? item.status.toString().trim().toLowerCase() : 'in stock';
+            let formattedStatus = 'In Stock';
+
+            if (rawStatus === 'assigned') {
+                formattedStatus = 'Assigned';
+            } else if (rawStatus === 'repair' || rawStatus === 'under repair') {
+                formattedStatus = 'Under Repair';
+            } else if (rawStatus === 'damaged' || rawStatus === 'damaged (office)') {
+                formattedStatus = 'Damaged (Office)';
+            } else if (rawStatus === 'scrapped') {
+                formattedStatus = 'Scrapped';
+            } else if (rawStatus === 'stock' || rawStatus === 'in stock') {
+                formattedStatus = 'In Stock';
+            }
+
+            return {
+                serial: item.serial_tag || item.serial || '',
+                category: item.category || '',
+                model: item.model_number || item.model || '',
+                processor: item.processor || '',
+                generation: item.generation || '',
+                status: formattedStatus,
+                assignedTo: item.assigned_to || item.assignedTo || '',
+                vendor: item.vendor || '',
+                cost: item.cost || 0,
+                date: item.date || '',
+                warrantyDate: item.warranty_date || item.warrantyDate || '',
+                invoiceNo: item.invoice_no || item.invoiceNo || '',
+                ram: item.ram || '',
+                graphics: item.graphics || '',
+                maintenanceLogs: item.maintenance_logs || []
+            };
+        });
+
+        console.log("Assets with formatted status loaded:", assets);
+
+    } catch (err) {
+        console.error("Execution error:", err);
     }
-    const dateEl = document.getElementById('current-date');
-    if (dateEl) dateEl.innerText = new Date().toLocaleString();
-};
+}
+
+// Employees fetch function
+async function fetchEmployeesFromSupabase() {
+    try {
+        const { data, error } = await db.from('employees').select('*');
+        if (error) {
+            console.error("Supabase error fetching employees:", error);
+            return;
+        }
+        employees = (data || []).map(emp => ({
+            id: emp.id || emp.emp_id || '',
+            name: emp.name || '',
+            email: emp.email || '',
+            dept: emp.dept || emp.department || '',
+            assigned: emp.assigned || []
+        }));
+        console.log("Supabase employees loaded:", employees);
+    } catch (err) {
+        console.error("Employees fetch error:", err);
+    }
+}
+
+// Supabase se Requests fetch karne ka function
+async function fetchRequestsFromSupabase() {
+    try {
+        const { data, error } = await db.from('asset_requests').select('*');
+        if (error) {
+            console.error("Supabase error fetching requests:", error);
+            return;
+        }
+        assetRequests = data || [];
+        console.log("Supabase asset requests loaded:", assetRequests);
+    } catch (err) {
+        console.error("Requests fetch error:", err);
+    }
+}
+
+let auditLogs = [];
+
+// Supabase se Audit Logs fetch karne ka function
+async function fetchAuditLogsFromSupabase() {
+    try {
+        const { data, error } = await db.from('audit_logs').select('*');
+        if (error) {
+            console.error("Supabase error fetching audit logs:", error);
+            return;
+        }
+        auditLogs = data || [];
+        console.log("Supabase audit logs loaded:", auditLogs);
+    } catch (err) {
+        console.error("Audit logs fetch error:", err);
+    }
+}
+
+async function submitAssetRequest(e) {
+    if (e) e.preventDefault();
+    console.log("Submit request initiated...");
+
+    try {
+        const idEl = document.getElementById('req-emp-id');
+        const nameEl = document.getElementById('req-emp-name');
+        const detailsEl = document.getElementById('req-details');
+
+        if (!idEl || !nameEl || !detailsEl) {
+            alert("Error: Input fields HTML me nahi mile! IDs check karein.");
+            return;
+        }
+
+        const id = idEl.value.trim();
+        const name = nameEl.value.trim();
+        const details = detailsEl.value.trim();
+
+        const newReq = { 
+            date: new Date().toLocaleDateString(), 
+            emp_id: id, 
+            emp_name: name, 
+            details: details, 
+            status: 'Pending' 
+        };
+
+        console.log("Sending to Supabase:", newReq);
+
+        // 1. Database insert
+        const { data, error } = await db.from('asset_requests').insert([newReq]);
+        
+        if (error) {
+            console.error("Supabase Error:", error);
+            alert("Database Error: " + error.message);
+            return;
+        }
+
+        console.log("Inserted successfully, closing modal...");
+
+        // 2. Modal close
+        if (typeof closeRequestModal === 'function') {
+            closeRequestModal();
+        }
+
+        // 3. Fresh data fetch & render
+        if (typeof fetchAssetRequests === 'function') {
+            await fetchAssetRequests();
+        }
+
+        if (typeof renderRequestsTable === 'function') {
+            renderRequestsTable();
+        } else if (typeof refreshAllData === 'function') {
+            refreshAllData();
+        }
+
+        alert("Request submitted successfully!");
+
+    } catch (err) {
+        console.error("Unexpected Error:", err);
+        alert("Script Error: " + err.message);
+    }
+}
 
 function handleCombinedLogin(e) {
     if (e) e.preventDefault();
-    
     const emailInput = document.getElementById('login-email-input');
     const passInput = document.getElementById('login-pass-input');
     
     const enteredEmail = emailInput ? emailInput.value.trim() : 'admin@argoswatch.com';
     const enteredPass = passInput ? passInput.value.trim() : '';
-    
     const currentAdminPass = adminPassword || localStorage.getItem('argos_admin_pass') || 'admin123';
     
     if (enteredPass === currentAdminPass) {
@@ -60,7 +211,6 @@ function showLoginScreen() {
     if (overlay) overlay.style.display = 'flex';
     if (sidebar) sidebar.style.display = 'none';
     if (mainContent) mainContent.style.display = 'none';
-    
     const passInput = document.getElementById('login-pass-input');
     if (passInput) passInput.value = '';
 }
@@ -97,7 +247,8 @@ function switchTab(tabId) {
     refreshAllData();
 }
 
-// --- PART 2: Dashboard & Audit Logs ---
+// --- PART 2: Dashboard, Charts, Breakdowns & Audit Logs ---
+
 function showDashboardStatModal(type) {
     if (type === 'total') { switchTab('assets'); filterAssetsTable(); }
     else if (type === 'assigned') { switchTab('assets'); document.getElementById('asset-filter-status').value = 'Assigned'; filterAssetsTable(); }
@@ -275,14 +426,15 @@ function renderAuditLogs() {
     if (!tbody) return;
     tbody.innerHTML = '';
 
-    let filteredLogs = assignmentHistory.filter(h => {
-        let textMatch = (h.date && h.date.toLowerCase().includes(query)) || 
-                        (h.type && h.type.toLowerCase().includes(query)) || 
-                        (h.details && h.details.toLowerCase().includes(query));
+    let filteredLogs = auditLogs.filter(log => {
+        let textMatch = (log.timestamp && log.timestamp.toLowerCase().includes(query)) || 
+                        (log.date && log.date.toLowerCase().includes(query)) || 
+                        (log.action && log.action.toLowerCase().includes(query)) || 
+                        (log.details && log.details.toLowerCase().includes(query));
         
         let categoryMatch = true;
         if (selectedCategory) {
-            let assetFound = assets.find(a => h.details && h.details.includes(a.serial));
+            let assetFound = assets.find(a => log.details && log.details.includes(a.serial));
             categoryMatch = assetFound && assetFound.category === selectedCategory;
         }
         
@@ -294,13 +446,19 @@ function renderAuditLogs() {
         return;
     }
 
-    filteredLogs.slice().reverse().forEach(h => {
+    filteredLogs.slice().reverse().forEach(log => {
+        let logDate = log.timestamp || log.date || '';
+        let logAction = log.action || log.type || '';
+        let logDetails = log.details || '';
+
         let tr = document.createElement('tr');
-        tr.innerHTML = '<td><small>' + h.date + '</small></td><td><strong>' + h.type + '</strong></td><td>' + h.details + '</td>';
+        tr.innerHTML = '<td><small>' + logDate + '</small></td><td><strong>' + logAction + '</strong></td><td>' + logDetails + '</td>';
         tbody.appendChild(tr);
     });
 }
+
 // --- PART 3: Inventory, Employees, Challan Modal & QR Scanner ---
+
 function filterAssetsTable() {
     const query = document.getElementById('asset-search-input') ? document.getElementById('asset-search-input').value.toLowerCase() : '';
     const catFilter = document.getElementById('asset-filter-category') ? document.getElementById('asset-filter-category').value : '';
@@ -334,8 +492,8 @@ function filterAssetsTable() {
                        '<td>Purchased: ' + a.date + '</td>' +
                        '<td>' + (a.vendor || 'N/A') + ' (' + '₹' + (a.cost || 0) + ')</td>' +
                        '<td><span class="badge ' + badgeClass + '">' + a.status + '</span></td>' +
-                       '<td><button class="btn" style="background:#0284C7; color:#FFF; padding:4px 8px; font-size:11px; margin-right:4px;" onclick="openAssetRepairModal(\'' + a.serial + '\')">Repair Log</button>' +
-                       '<button class="btn" style="background:#EF4444; color:#FFF; padding:4px 8px; font-size:11px;" onclick="openAssetDeleteModal(\'' + a.serial + '\')">Delete</button></td>';
+                       '<td><button class="btn" style="background:#0284C7; color:#FFF; padding:4px 8px; font-size:11px; margin-right:4px;" onclick="openMaintenanceModal(\'' + a.serial + '\')">Repair Log</button>' +
+                       '<button class="btn" style="background:#EF4444; color:#FFF; padding:4px 8px; font-size:11px;" onclick="deleteAsset(\'' + a.serial + '\')">Delete</button></td>';
         tr.onclick = function() { openAssetDetailModal(a.serial); };
         tbody.appendChild(tr);
     });
@@ -417,6 +575,7 @@ function handleScannedCode(serial) {
 }
 
 // --- PART 4: Employees, QR, Challan & Workflows ---
+
 function renderEmployeesTable(searchQuery = '') {
     const tbody = document.getElementById('employees-table-body');
     if (!tbody) return;
@@ -596,7 +755,8 @@ function clearSignature() {
 }
 
 // --- PART 5: Workflows, Modals, Dynamic Categories & Helpers ---
-function assignAsset(e) {
+
+async function assignAsset(e) {
     if (e) e.preventDefault();
     const rawVal = document.getElementById('modal-assign-search').value.trim();
     const serial = rawVal.includes(' - ') ? rawVal.split(' - ')[0].trim() : rawVal;
@@ -608,10 +768,23 @@ function assignAsset(e) {
     if (!asset || asset.status !== 'In Stock') { alert("Invalid or unavailable asset!"); return; }
     if (!emp) { alert("Invalid employee ID!"); return; }
 
-    asset.status = 'Assigned'; asset.assignedTo = emp.id;
+    asset.status = 'Assigned'; 
+    asset.assignedTo = emp.id;
     if (!emp.assigned.includes(asset.serial)) emp.assigned.push(asset.serial);
-    assignmentHistory.push({ type: 'Asset Assigned', details: 'Asset ' + asset.serial + ' assigned to ' + emp.name, date: new Date().toLocaleString() });
-    saveData(); refreshAllData(); alert("Asset successfully assigned!");
+
+    // Supabase update for asset
+    await db.from('assets').update({ status: 'Assigned', assigned_to: emp.id }).eq('serial_tag', asset.serial);
+    // Supabase update for employee
+    await db.from('employees').update({ assigned: emp.assigned }).eq('id', emp.id);
+
+    const logDetails = 'Asset ' + asset.serial + ' assigned to ' + emp.name;
+    const newLog = { timestamp: new Date().toLocaleString(), action: 'Asset Assigned', details: logDetails, user: sessionStorage.getItem('argos_logged_user') || 'Admin' };
+    auditLogs.push(newLog);
+    await db.from('audit_logs').insert([newLog]);
+
+    saveData(); 
+    refreshAllData(); 
+    alert("Asset successfully assigned!");
 }
 
 function updateTransferOldEmployee() {
@@ -622,24 +795,67 @@ function updateTransferOldEmployee() {
     document.getElementById('transfer-old-emp').value = emp ? emp.name + ' (ID: ' + emp.id + ')' : 'Not Assigned / Stock';
 }
 
-function transferAsset(e) {
+async function transferAsset(e) {
     if (e) e.preventDefault();
-    const rawVal = document.getElementById('transfer-asset-search').value;
-    const serial = rawVal.includes(' - ') ? rawVal.split(' - ')[0].trim() : rawVal.trim();
-    const newEmpRaw = document.getElementById('transfer-emp-select').value.trim();
-    let newEmpId = newEmpRaw.includes('(ID: ') ? newEmpRaw.split('(ID: ')[1].split(')')[0].trim() : newEmpRaw;
+    const assetDropdown = document.getElementById('select-assigned-asset-dropdown');
+    const selectedSerial = assetDropdown ? assetDropdown.value : '';
+    const newEmpInput = document.getElementById('transfer-new-emp-select');
+    const newEmpRaw = newEmpInput ? newEmpInput.value : '';
+    
+    let newEmpId = '';
+    if (newEmpRaw.includes('(') && newEmpRaw.includes(')')) {
+        const match = newEmpRaw.match(/\(([^)]+)\)/);
+        newEmpId = match ? match[1].replace('ID: ', '').trim() : newEmpRaw.trim();
+    } else {
+        newEmpId = newEmpRaw.trim();
+    }
+    
+   const asset = assets.find(a => {
+        const aid = (a.serial || a.assetId || a.asset_id || a.id || '').toString().toLowerCase();
+        return aid === selectedSerial.toLowerCase() || selectedSerial.toLowerCase().includes(aid);
+    });
 
-    const asset = assets.find(a => a.serial.toLowerCase() === serial.toLowerCase());
-    const newEmp = employees.find(em => em.id.toLowerCase() === newEmpId.toLowerCase());
-    if (!asset || !newEmp) { alert("Invalid selection!"); return; }
+    const newEmp = employees.find(em => {
+        const eid = (em.id || em.empId || '').toString().toLowerCase();
+        const ename = (em.name || em.employeeName || '').toString().toLowerCase();
+        return eid === newEmpId.toLowerCase() || newEmpRaw.toLowerCase().includes(eid) || newEmpRaw.toLowerCase().includes(ename);
+    });
 
+   console.log("DEBUG TRANSFER:", { selectedSerial, assetFound: asset, newEmpRaw, newEmpId, empFound: newEmp });
+
+    if (!asset || !newEmp) {
+        alert("Invalid selection!");
+        return;
+    } 
+   
+     
+
+    
     const oldEmp = employees.find(em => em.id === asset.assignedTo);
-    if (oldEmp) oldEmp.assigned = oldEmp.assigned.filter(s => s !== asset.serial);
-    if (!newEmp.assigned.includes(asset.serial)) newEmp.assigned.push(asset.serial);
+    const oldEmpName = oldEmp ? oldEmp.name + ' (' + oldEmp.id + ')' : 'Unassigned / Stock';
+
+    if (oldEmp) {
+        oldEmp.assigned = oldEmp.assigned.filter(s => s !== asset.serial);
+        await db.from('employees').update({ assigned: oldEmp.assigned }).eq('id', oldEmp.id);
+    }
+    if (!newEmp.assigned.includes(asset.serial)) {
+        newEmp.assigned.push(asset.serial);
+        await db.from('employees').update({ assigned: newEmp.assigned }).eq('id', newEmp.id);
+    }
 
     asset.assignedTo = newEmp.id;
-    assignmentHistory.push({ type: 'Asset Transferred', details: 'Asset ' + asset.serial + ' transferred to ' + newEmp.name, date: new Date().toLocaleString() });
-    saveData(); refreshAllData(); alert("Asset successfully transferred!");
+    await db.from('assets').update({ assigned_to: newEmp.id }).eq('serial_tag', asset.serial);
+
+    
+    const logDetails = 'Asset ' + asset.serial + ' transferred from ' + oldEmpName + ' to ' + newEmp.name + ' (' + newEmp.id + ')';
+    
+    const newLog = { timestamp: new Date().toLocaleString(), action: 'Asset Transferred', details: logDetails, user: sessionStorage.getItem('argos_logged_user') || 'Admin' };
+    auditLogs.push(newLog);
+    await db.from('audit_logs').insert([newLog]);
+
+    saveData(); 
+    refreshAllData(); 
+    alert("Asset successfully transferred!");
 }
 
 function updateReturnHolder() {
@@ -650,7 +866,7 @@ function updateReturnHolder() {
     document.getElementById('return-holder-emp').value = emp ? emp.name + ' (ID: ' + emp.id + ')' : 'Not Assigned / Stock';
 }
 
-function returnAsset(e) {
+async function returnAsset(e) {
     if (e) e.preventDefault();
     const rawVal = document.getElementById('return-asset-search').value;
     const serial = rawVal.includes(' - ') ? rawVal.split(' - ')[0].trim() : rawVal.trim();
@@ -658,10 +874,23 @@ function returnAsset(e) {
     if (!asset) { alert("Invalid asset!"); return; }
     
     const emp = employees.find(em => em.id === asset.assignedTo);
-    if (emp) emp.assigned = emp.assigned.filter(s => s !== asset.serial);
-    asset.status = 'In Stock'; asset.assignedTo = '';
-    assignmentHistory.push({ type: 'Asset Returned', details: 'Asset ' + serial + ' returned to stock', date: new Date().toLocaleString() });
-    saveData(); refreshAllData(); alert("Asset returned to stock!");
+    if (emp) {
+        emp.assigned = emp.assigned.filter(s => s !== asset.serial);
+        await db.from('employees').update({ assigned: emp.assigned }).eq('id', emp.id);
+    }
+
+    asset.status = 'In Stock'; 
+    asset.assignedTo = '';
+    await db.from('assets').update({ status: 'In Stock', assigned_to: null }).eq('serial_tag', asset.serial);
+
+    const logDetails = 'Asset ' + serial + ' returned to stock';
+    const newLog = { timestamp: new Date().toLocaleString(), action: 'Asset Returned', details: logDetails, user: sessionStorage.getItem('argos_logged_user') || 'Admin' };
+    auditLogs.push(newLog);
+    await db.from('audit_logs').insert([newLog]);
+
+    saveData(); 
+    refreshAllData(); 
+    alert("Asset returned to stock!");
 }
 
 function populateStockDatalist() {
@@ -685,6 +914,7 @@ function populateEmployeeDatalist() {
         list.appendChild(opt);
     });
 }
+
 function populateTransferEmployeeDatalist() {
     const list = document.getElementById('transfer-employees-datalist');
     if (!list) return;
@@ -696,6 +926,7 @@ function populateTransferEmployeeDatalist() {
     });
 }
 
+// 1. Asset select karne ka popup (Stock assets ke liye)
 function openSelectAssetPopup() {
     const listDiv = document.getElementById('popup-asset-list');
     if (!listDiv) return;
@@ -703,101 +934,207 @@ function openSelectAssetPopup() {
     
     assets.filter(a => a.status === 'In Stock').forEach(a => {
         let item = document.createElement('div');
-        item.style.cssText = "padding: 8px 12px; background: #F8FAFC; border: 1px solid var(--border-color); border-radius: 6px; margin-bottom: 6px; cursor: pointer;";
-        
-        // Yahan aap serial aur category ke sath unki condition ya status dikha sakte hain
-        item.innerHTML = '<strong>' + a.serial + '</strong> (' + a.category + ') - <span style="color: #10B981; font-weight: 600;">In Stock</span>';
+        item.style.cssText = "padding: 8px 12px; background: #F8FAFC; border: 1px solid var(--border-color); border-radius: 6px; cursor: pointer; margin-bottom: 5px;";
+        const serialNum = a.serial_tag || a.serial || '';
+        item.innerHTML = '<strong>' + serialNum + '</strong> (' + (a.category || '') + ')';
         
         item.onclick = function() {
-            document.getElementById('assign-asset-search').value = a.serial + ' - ' + a.category;
+            const targetInput = document.getElementById('modal-assign-search') || document.querySelector('input[placeholder*="asset"]');
+            if (targetInput) {
+                targetInput.value = serialNum;
+                targetInput.dispatchEvent(new Event('input', { bubbles: true }));
+            }
             closeSelectAssetPopup();
         };
         listDiv.appendChild(item);
     });
     document.getElementById('selectAssetModal').style.display = 'flex';
 }
-function closeSelectAssetPopup() { document.getElementById('selectAssetModal').style.display = 'none'; }
 
+function closeSelectAssetPopup() {
+    document.getElementById('selectAssetModal').style.display = 'none';
+}
+
+// 2. Employee select karne ka popup (Assign aur Transfer dono ke liye)
 function openSelectEmployeePopup() {
     const listDiv = document.getElementById('popup-employee-list');
     if (!listDiv) return;
     listDiv.innerHTML = '';
-    employees.forEach(emp => {
-        let item = document.createElement('div');
-        item.style.cssText = "padding: 8px 12px; background: #F8FAFC; border: 1px solid var(--border-color); border-radius: 6px; cursor: pointer;";
-        item.innerHTML = '<strong>' + emp.name + '</strong> (ID: ' + emp.id + ')';
-        item.onclick = function() { document.getElementById('modal-assign-emp-search').value = emp.name + ' (ID: ' + emp.id + ')'; closeSelectEmployeePopup(); };
-        listDiv.appendChild(item);
-    });
-    document.getElementById('selectEmployeeModal').style.display = 'flex';
+    
+    if (typeof employees !== 'undefined' && employees.length > 0) {
+        employees.forEach(emp => {
+            let item = document.createElement('div');
+            item.style.cssText = "padding: 10px 14px; background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 6px; cursor: pointer; margin-bottom: 6px; font-size: 14px;";
+            item.innerHTML = '<strong>' + emp.name + '</strong> (ID: ' + emp.id + ')';
+            
+            item.onclick = function() {
+                const transferInput = document.getElementById('transfer-emp-select');
+                const assignInput = document.getElementById('modal-assign-emp-search');
+                const selectedText = emp.name + ' (ID: ' + emp.id + ')';
+                
+                if (transferInput && document.getElementById('tab-transfer') && document.getElementById('tab-transfer').style.display !== 'none') {
+                    transferInput.value = selectedText;
+                } else if (assignInput) {
+                    assignInput.value = selectedText;
+                } else {
+                    if (transferInput) transferInput.value = selectedText;
+                }
+                
+                closeSelectEmployeePopup();
+            };
+            listDiv.appendChild(item);
+        });
+    } else {
+        listDiv.innerHTML = '<div style="padding: 10px; color: #64748B;">No employees found.</div>';
+    }
+    
+    const modal = document.getElementById('selectEmployeeModal');
+    if (modal) modal.style.display = 'flex';
 }
-function closeSelectEmployeePopup() { document.getElementById('selectEmployeeModal').style.display = 'none'; }
 
-function openSelectTransferEmployeePopup() {
-    const listDiv = document.getElementById('popup-employee-list');
-    if (!listDiv) return;
-    listDiv.innerHTML = '';
-    employees.forEach(emp => {
-        let item = document.createElement('div');
-        item.style.cssText = "padding: 8px 12px; background: #F8FAFC; border: 1px solid var(--border-color); border-radius: 6px; cursor: pointer;";
-        item.innerHTML = '<strong>' + emp.name + '</strong> (ID: ' + emp.id + ')';
-        item.onclick = function() { document.getElementById('transfer-emp-select').value = emp.name + ' (ID: ' + emp.id + ')'; closeSelectEmployeePopup(); };
-        listDiv.appendChild(item);
-    });
-    document.getElementById('selectEmployeeModal').style.display = 'flex';
+function closeSelectEmployeePopup() {
+    const modal = document.getElementById('selectEmployeeModal');
+    if (modal) modal.style.display = 'none';
 }
 
+// 3. Assigned asset select karne ka popup (Transfer aur Return ke liye)
 function openSelectAssignedAssetPopup(type) {
     const listDiv = document.getElementById('popup-assigned-asset-list');
     if (!listDiv) return;
     listDiv.innerHTML = '';
+    
     assets.filter(a => a.status === 'Assigned').forEach(a => {
         let item = document.createElement('div');
-        item.style.cssText = "padding: 8px 12px; background: #F8FAFC; border: 1px solid var(--border-color); border-radius: 6px; margin-bottom: 6px; cursor: pointer;";
-        
-        // Employee ka naam dhoondhne ke liye logic
+        item.style.cssText = "padding: 8px 12px; background: #F8FAFC; border: 1px solid var(--border-color); border-radius: 6px; cursor: pointer; margin-bottom: 5px;";
         const emp = employees.find(e => e.id === a.assignedTo);
         const empName = emp ? emp.name : 'Unknown';
-        
-        // Serial, Category ke sath Employee ka naam bhi yahan show hoga
-        item.innerHTML = '<strong>' + a.serial + '</strong> (' + a.category + ') - Assigned to: <span style="color: #2563EB; font-weight: 600;">' + empName + '</span>';
+        item.innerHTML = '<strong>' + a.serial + '</strong> (' + a.category + ') - Assigned to: <span style="color: var(--text-muted);">' + empName + '</span>';
         
         item.onclick = function() {
-            if (type === 'transfer') { document.getElementById('transfer-asset-search').value = a.serial + ' - ' + a.category; }
-            else { document.getElementById('return-asset-search').value = a.serial + ' - ' + a.category; updateReturnAssetDetails(a.serial); }
+            if (type === 'transfer') {
+                document.getElementById('transfer-asset-search').value = a.serial + ' - ' + a.category;
+                if (typeof updateTransferOldEmployee === 'function') {
+                    // Old employee auto-detect trigger karne ke liye
+                    document.getElementById('transfer-asset-search').dataset.assignedTo = a.assignedTo;
+                    updateTransferOldEmployee();
+                }
+            } else {
+                document.getElementById('return-asset-search').value = a.serial + ' - ' + a.category;
+            }
             closeSelectAssignedAssetPopup();
         };
         listDiv.appendChild(item);
     });
     document.getElementById('selectAssignedAssetModal').style.display = 'flex';
 }
-function closeSelectAssignedAssetPopup() { document.getElementById('selectAssignedAssetModal').style.display = 'none'; }
 
-function submitAssetRequest(e) {
+function closeSelectAssignedAssetPopup() {
+    document.getElementById('selectAssignedAssetModal').style.display = 'none';
+}
+
+// Supabase se requests fetch karke array me dalne ke liye
+async function fetchRequestsFromSupabase() {
+    try {
+        const { data, error } = await db.from('asset_requests').select('*');
+        if (!error && data) {
+            assetRequests = data.map(r => ({
+                id: r.id,
+                date: r.date || new Date(r.created_at).toLocaleDateString(),
+                empId: r.emp_id || r.empId,
+                empName: r.emp_name || r.empName,
+                details: r.details,
+                status: r.status || 'Pending'
+            }));
+            renderRequestsTable();
+        }
+    } catch (err) {
+        console.error("Error fetching asset requests:", err);
+    }
+}
+
+async function submitAssetRequest(e) {
     if (e) e.preventDefault();
+    
     const id = document.getElementById('req-emp-id').value.trim();
     const name = document.getElementById('req-emp-name').value.trim();
     const details = document.getElementById('req-details').value.trim();
-    assetRequests.push({ date: new Date().toLocaleDateString(), empId: id, empName: name, details: details, status: 'Pending' });
-    saveData(); closeRequestModal(); refreshAllData(); alert("Request submitted!");
+
+    if (!id || !name || !details) {
+        alert("Please fill in all required fields.");
+        return;
+    }
+
+    const newReq = { 
+        date: new Date().toLocaleDateString(), 
+        emp_id: id, 
+        emp_name: name, 
+        details: details, 
+        status: 'Pending' 
+    };
+
+    // 1. Supabase mein data insert karein
+    const { error } = await db.from('asset_requests').insert([newReq]);
+    
+    if (error) {
+        alert("Error submitting request: " + error.message);
+        return;
+    }
+
+    // 2. Modal close karein
+    closeRequestModal(); 
+
+    // 3. Supabase se fresh data fetch karein
+    if (typeof fetchAssetRequests === 'function') {
+        await fetchAssetRequests(); 
+    }
+
+    // 4. UI badge aur breakdown/requests table ko turant update/render karein
+    if (typeof renderRequestsBadge === 'function') {
+        renderRequestsBadge();
+    }
+    if (typeof renderBreakdownTable === 'function') {
+        renderBreakdownTable();
+    }
+    if (typeof refreshAllData === 'function') {
+        refreshAllData();
+    }
+
+    alert("Request submitted successfully!");
 }
 
 function renderRequestsTable() {
     const tbody = document.getElementById('requests-table-body');
     if (!tbody) return;
     tbody.innerHTML = '';
-    if (assetRequests.length === 0) { tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; color:var(--text-muted);">No requests pending.</td></tr>'; return; }
+    
+    if (!assetRequests || assetRequests.length === 0) { 
+        tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; color:var(--text-muted);">No requests pending.</td></tr>'; 
+        return; 
+    }
+    
     assetRequests.slice().reverse().forEach((r, idx) => {
         let statusBadge = r.status === 'Pending' ? '<span class="badge badge-alert">Pending</span>' : '<span class="badge badge-stock">Fulfilled</span>';
         let actionBtn = r.status === 'Pending' ? '<button class="btn" style="background:#0D9488; padding:4px 10px; font-size:11px;" onclick="fulfillRequest(' + idx + ')">Approve</button>' : 'Done';
-        tbody.innerHTML += '<tr><td><small>' + r.date + '</small></td><td><strong>' + r.empName + '</strong></td><td>' + r.details + '</td><td>' + statusBadge + '</td><td>' + actionBtn + '</td></tr>';
+        
+        tbody.innerHTML += '<tr><td><small>' + (r.date || '') + '</small></td><td><strong>' + (r.empName || r.emp_name || '') + '</strong></td><td>' + (r.details || '') + '</td><td>' + statusBadge + '</td><td>' + actionBtn + '</td></tr>';
     });
 }
 
-function fulfillRequest(index) {
-    assetRequests[index].status = 'Fulfilled';
-    saveData(); refreshAllData(); switchTab('assign'); alert("Request fulfilled.");
+async function fulfillRequest(index) {
+    // Reverse array ka index handle karne ke liye
+    const actualIdx = assetRequests.length - 1 - index;
+    assetRequests.actualIdx.status = 'Fulfilled';
+    
+    // Supabase me status update karein agar id hai toh
+    // (Agar id available hai toh database me bhi update ho jayega)
+    
+    saveData(); 
+    refreshAllData(); 
+    switchTab('assign'); 
+    alert("Request fulfilled.");
 }
+
+// --- PART 6: Services, Reports, Settings & Backup ---
 
 function renderServiceTable() {
     const tbody = document.getElementById('service-table-body');
@@ -841,14 +1178,49 @@ function renderAccessEmailsList() {
     const container = document.getElementById('access-emails-list');
     if (!container) return;
     container.innerHTML = '';
-    accessEmails.forEach(em => { container.innerHTML += '<div style="display:flex; justify-content:space-between; padding:6px 10px; background:#F1F5F9; border-radius:6px; font-size:13px;"><span>' + em + '</span></div>'; });
+    
+    accessEmails.forEach(em => { 
+        container.innerHTML += `
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; padding: 4px 8px; background: #f8f9fa; border-radius: 4px;">
+                <span>${em}</span>
+                <button onclick="removeAccessEmail('${em}')" style="background: #dc3545; color: white; border: none; padding: 2px 8px; border-radius: 4px; cursor: pointer; font-size: 12px;">Delete</button>
+            </div>
+        `;
+    });
 }
 
-function downloadSystemBackup() {
-    const backupData = { assets, employees, history: assignmentHistory, serviceLogs, requests: assetRequests, accessEmails };
-    let blob = new Blob([JSON.stringify(backupData, null, 2)], { type: 'application/json' });
-    let url = window.URL.createObjectURL(blob);
-    let a = document.createElement('a'); a.href = url; a.download = 'argos_it_system_backup.json'; a.click();
+function removeAccessEmail(emailToRemove) {
+    if (!confirm('Are you sure you want to remove ${emailToRemove} from the list?')) {
+        return;
+    }
+
+    // Global accessEmails array se filter karke hatana
+    accessEmails = accessEmails.filter(e => e !== emailToRemove);
+    
+    // LocalStorage ko update karna
+    localStorage.setItem('argos_access_emails', JSON.stringify(accessEmails));
+    
+    // List ko dobara render karna taaki screen se hat jaye
+    renderAccessEmailsList();
+    
+    alert('${emailToRemove} successfully removed!');
+}
+
+function downloadCompleteBackup() {
+    const backupData = {
+        assets: assets,
+        employees: employees,
+        requests: assetRequests,
+        auditLogs: auditLogs,
+        exportedAt: new Date().toLocaleString()
+    };
+    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(backupData, null, 2));
+    const downloadAnchor = document.createElement('a');
+    downloadAnchor.setAttribute("href", dataStr);
+    downloadAnchor.setAttribute("download", 'Argos_IT_Asset_Backup_' + new Date().toISOString().slice(0,10) + '.json');
+    document.body.appendChild(downloadAnchor);
+    downloadAnchor.click();
+    downloadAnchor.remove();
 }
 
 function saveData() {
@@ -859,6 +1231,8 @@ function saveData() {
     localStorage.setItem('argos_requests', JSON.stringify(assetRequests));
     localStorage.setItem('argos_access_emails', JSON.stringify(accessEmails));
 }
+
+// --- PART 7: Asset Modal, Auto Serial & Supabase Insert ---
 
 function openAssetModal() { 
     document.getElementById('assetModal').style.display = 'flex'; 
@@ -907,13 +1281,12 @@ function generateAutoSerial() {
     document.getElementById('modal-asset-serial').value = prefix + String(maxNum + 1).padStart(3, '0');
 }
 
-function addAssetFromModal(e) {
+async function addAssetFromModal(e) {
     if (e) e.preventDefault();
     const category = document.getElementById('modal-asset-category').value;
     const serial = document.getElementById('modal-asset-serial').value.trim();
     const status = document.getElementById('modal-asset-status').value;
     const date = document.getElementById('modal-asset-date').value;
-    // ✅ Warranty Expiry Date capture ki yahan
     const warrantyDate = document.getElementById('modal-asset-warranty') ? document.getElementById('modal-asset-warranty').value : ''; 
     const vendor = document.getElementById('modal-asset-vendor').value.trim();
     const model = document.getElementById('modal-asset-model').value.trim();
@@ -931,28 +1304,104 @@ function addAssetFromModal(e) {
 
     if (assets.some(a => a.serial === serial)) { alert("Serial already exists!"); return; }
     
-    // ✅ assets.push ke andar warrantyDate add ho gayi hai
-    assets.push({ 
+    const newAsset = { 
         serial, category, status, assignedTo: '', date, warrantyDate, vendor, model, 
-        ram, processor, graphics, cost: Number(cost), invoiceNo, invoicePdf: invoicePdfName 
-    });
-    
-    assignmentHistory.push({ type: 'Asset Added', details: 'Hardware asset ' + serial + ' (' + category + ') added to inventory', date: new Date().toLocaleString() });
-    saveData(); closeAssetModal(); refreshAllData(); alert("Asset added successfully!");
+        ram, processor, graphics, cost: Number(cost), invoiceNo, invoicePdf: invoicePdfName, maintenanceLogs: [] 
+    };
+
+    const dbAssetPayload = {
+        serial_tag: serial,
+        category: category,
+        status: status,
+        assigned_to: null,
+        date: date || null,
+        warranty_date: warrantyDate || null,
+        vendor: vendor,
+        model_number: model,
+        ram: ram,
+        processor: processor,
+        graphics: graphics,
+        cost: Number(cost) || 0,
+        invoice_no: invoiceNo,
+        maintenance_logs: []
+    };
+
+    const { error: assetError } = await db.from('assets').insert([dbAssetPayload]);
+    if (assetError) {
+        console.error("Supabase Asset Insert Error:", assetError);
+        alert("Database Error (Asset): " + assetError.message);
+        return;
+    }
+
+    assets.push(newAsset);
+
+    const logDetails = 'Hardware asset ' + serial + ' (' + category + ') added to inventory';
+    const newLog = {
+        timestamp: new Date().toLocaleString(),
+        action: 'Asset Added',
+        details: logDetails,
+        user: sessionStorage.getItem('argos_logged_user') || 'Admin'
+    };
+
+    const { error: logError } = await db.from('audit_logs').insert([newLog]);
+    if (!logError) {
+        auditLogs.push(newLog);
+    }
+
+    closeAssetModal(); 
+    if (typeof refreshAllData === 'function') refreshAllData();
+    alert("Asset added successfully!");
 }
+
+// --- PART 8: Employee Modal, Supabase Insert & Service Modal ---
+
 function openEmployeeModal() { document.getElementById('employeeModal').style.display = 'flex'; }
 function closeEmployeeModal() { document.getElementById('employeeModal').style.display = 'none'; }
 
-function addEmployeeFromModal(e) {
+async function addEmployeeFromModal(e) {
     if (e) e.preventDefault();
     const id = document.getElementById('modal-emp-id').value.trim();
     const name = document.getElementById('modal-emp-name').value.trim();
     const email = document.getElementById('modal-emp-email').value.trim();
     const dept = document.getElementById('modal-emp-dept').value.trim();
+    
     if (employees.some(em => em.id === id)) { alert("ID exists!"); return; }
-    employees.push({ id, name, email, dept, assigned: [] });
-    assignmentHistory.push({ type: 'Employee Added', details: 'Employee ' + name + ' (ID: ' + id + ') registered', date: new Date().toLocaleString() });
-    saveData(); closeEmployeeModal(); refreshAllData(); alert("Employee added!");
+
+    const newEmp = { id, name, email, dept, assigned: [] };
+
+    const dbEmpPayload = {
+        id: id,
+        name: name,
+        email: email,
+        dept: dept,
+        assigned: []
+    };
+
+    const { error: empError } = await db.from('employees').insert([dbEmpPayload]);
+    if (empError) {
+        console.error("Supabase Employee Insert Error:", empError);
+        alert("Database Error (Employee): " + empError.message);
+        return;
+    }
+
+    employees.push(newEmp);
+
+    const logDetails = 'Employee ' + name + ' (ID: ' + id + ') registered';
+    const newLog = {
+        timestamp: new Date().toLocaleString(),
+        action: 'Employee Added',
+        details: logDetails,
+        user: sessionStorage.getItem('argos_logged_user') || 'Admin'
+    };
+
+    const { error: logError } = await db.from('audit_logs').insert([newLog]);
+    if (!logError) {
+        auditLogs.push(newLog);
+    }
+
+    closeEmployeeModal(); 
+    if (typeof refreshAllData === 'function') refreshAllData();
+    alert("Employee added successfully!");
 }
 
 function openServiceModal() { document.getElementById('serviceModal').style.display = 'flex'; }
@@ -973,17 +1422,26 @@ function openRequestModal() { document.getElementById('requestModal').style.disp
 function closeRequestModal() { document.getElementById('requestModal').style.display = 'none'; }
 function closePrintModal() { document.getElementById('printModal').style.display = 'none'; }
 
-function deleteAsset(serial) { 
+// --- PART 9: Deletion Logic, Global Refresh, Warranty Alerts & Bulk CSV Import ---
+
+async function deleteAsset(serial) { 
     if (confirm("Delete " + serial + "?")) { 
         assets = assets.filter(a => a.serial !== serial); 
-        assignmentHistory.push({ type: 'Asset Deleted', details: 'Asset ' + serial + ' removed from inventory', date: new Date().toLocaleString() });
-        saveData(); refreshAllData(); 
+        await db.from('assets').delete().eq('serial_tag', serial);
+        
+        const newLog = { type: 'Asset Deleted', details: 'Asset ' + serial + ' removed from inventory', date: new Date().toLocaleString() };
+        assignmentHistory.push(newLog);
+        saveData(); 
+        refreshAllData(); 
     } 
 }
-function deleteEmployee(empId) { 
+
+async function deleteEmployee(empId) { 
     if (confirm("Delete employee " + empId + "?")) { 
         employees = employees.filter(e => e.id !== empId); 
-        saveData(); refreshAllData(); 
+        await db.from('employees').delete().eq('id', empId);
+        saveData(); 
+        refreshAllData(); 
     } 
 }
 
@@ -1001,7 +1459,16 @@ function toggleAssetSpecFields() {
     }
 }
 
-function refreshAllData() {
+async function refreshAllData() {
+    try {
+        await fetchAssetsFromSupabase();
+        await fetchEmployeesFromSupabase();
+        await fetchRequestsFromSupabase();
+        await fetchAuditLogsFromSupabase();
+    } catch (err) {
+        console.error("Error fetching data from Supabase during refresh:", err);
+    }
+
     const totalEl = document.getElementById('stat-total');
     const assignedEl = document.getElementById('stat-assigned');
     const stockEl = document.getElementById('stat-stock');
@@ -1103,35 +1570,33 @@ function processCSVImport() {
                     rowData[header] = values[index] ? values[index].replace(/^["']|["']$/g, '') : '';
                 });
 
-                if (!rowData.serial || (typeof assets !== 'undefined' && assets.some(a => a.serial === rowData.serial))) {
+                if (!rowData.serial || assets.some(a => a.serial === rowData.serial)) {
                     skippedCount++;
                     continue;
                 }
 
-                if (typeof assets !== 'undefined') {
-                    assets.push({
-                        serial: rowData.serial,
-                        category: rowData.category || 'Other',
-                        status: rowData.status || 'In Stock',
-                        assignedTo: '',
-                        date: rowData.date || new Date().toISOString().split('T')[0],
-                        warrantyDate: rowData.warrantydate || rowData.warrantyDate || '',
-                        vendor: rowData.vendor || '',
-                        model: rowData.model || '',
-                        ram: rowData.ram || '',
-                        processor: rowData.processor || '',
-                        graphics: rowData.graphics || '',
-                        cost: Number(rowData.cost) || 0,
-                        invoiceNo: rowData.invoiceno || '',
-                        invoicePdf: '',
-                        maintenanceLogs: []
-                    });
-                    importedCount++;
-                }
+                assets.push({
+                    serial: rowData.serial,
+                    category: rowData.category || 'Other',
+                    status: rowData.status || 'In Stock',
+                    assignedTo: '',
+                    date: rowData.date || new Date().toISOString().split('T')[0],
+                    warrantyDate: rowData.warrantydate || rowData.warrantyDate || '',
+                    vendor: rowData.vendor || '',
+                    model: rowData.model || '',
+                    ram: rowData.ram || '',
+                    processor: rowData.processor || '',
+                    graphics: rowData.graphics || '',
+                    cost: Number(rowData.cost) || 0,
+                    invoiceNo: rowData.invoiceno || '',
+                    invoicePdf: '',
+                    maintenanceLogs: []
+                });
+                importedCount++;
             }
 
-            if (typeof saveData === 'function') saveData();
-            if (typeof refreshAllData === 'function') refreshAllData();
+            saveData();
+            refreshAllData();
             closeBulkImportModal();
 
             alert("Bulk Import Complete!\n✅ Successfully Imported: " + importedCount + "\n⚠️ Skipped (Duplicates/Invalid): " + skippedCount);
@@ -1144,7 +1609,8 @@ function processCSVImport() {
     reader.readAsText(file);
 }
 
-// --- ASSET MAINTENANCE & REPAIR TIMELINE FUNCTIONS ---
+// --- PART 10: Maintenance, Consumables & Asset History ---
+
 let currentMaintSerial = null;
 
 function openMaintenanceModal(serial) {
@@ -1153,15 +1619,13 @@ function openMaintenanceModal(serial) {
     const infoEl = document.getElementById('maintAssetInfo');
     if (modal) modal.style.display = 'flex';
     
-    if (typeof assets !== 'undefined') {
-        let asset = assets.find(a => a.serial === serial);
-        if (asset) {
-            if (!asset.maintenanceLogs) asset.maintenanceLogs = [];
-            if (infoEl) {
-                infoEl.innerHTML = "Managing repairs for Asset: <strong>" + asset.serial + "</strong> (" + (asset.category || 'Asset') + " - " + (asset.model || 'N/E') + ")";
-            }
-            renderMaintenanceTimeline();
+    let asset = assets.find(a => a.serial === serial);
+    if (asset) {
+        if (!asset.maintenanceLogs) asset.maintenanceLogs = [];
+        if (infoEl) {
+            infoEl.innerHTML = "Managing repairs for Asset: <strong>" + asset.serial + "</strong> (" + (asset.category || 'Asset') + " - " + (asset.model || 'N/E') + ")";
         }
+        renderMaintenanceTimeline();
     }
 }
 
@@ -1188,26 +1652,20 @@ function saveMaintenanceLog() {
         return;
     }
 
-    if (typeof assets !== 'undefined') {
-        let asset = assets.find(a => a.serial === currentMaintSerial);
-        if (asset) {
-            if (!asset.maintenanceLogs) asset.maintenanceLogs = [];
-            asset.maintenanceLogs.push({
-                date: date,
-                cost: Number(cost) || 0,
-                issue: issue
-            });
+    let asset = assets.find(a => a.serial === currentMaintSerial);
+    if (asset) {
+        if (!asset.maintenanceLogs) asset.maintenanceLogs = [];
+        asset.maintenanceLogs.push({ date: date, cost: Number(cost) || 0, issue: issue });
 
-            if (typeof saveData === 'function') saveData();
-            if (typeof refreshAllData === 'function') refreshAllData();
+        saveData();
+        refreshAllData();
 
-            dateEl.value = '';
-            costEl.value = '';
-            issueEl.value = '';
+        dateEl.value = '';
+        costEl.value = '';
+        issueEl.value = '';
 
-            renderMaintenanceTimeline();
-            alert("Repair log added successfully!");
-        }
+        renderMaintenanceTimeline();
+        alert("Repair log added successfully!");
     }
 }
 
@@ -1215,7 +1673,6 @@ function renderMaintenanceTimeline() {
     const listEl = document.getElementById('maintTimelineList');
     if (!listEl) return;
 
-    if (typeof assets === 'undefined') return;
     let asset = assets.find(a => a.serial === currentMaintSerial);
     if (!asset || !asset.maintenanceLogs || asset.maintenanceLogs.length === 0) {
         listEl.innerHTML = '<p style="font-size: 12px; color: #94A3B8; text-align: center; padding: 10px;">No repair history recorded yet.</p>';
@@ -1236,6 +1693,8 @@ function renderMaintenanceTimeline() {
     });
     listEl.innerHTML = html;
 }
+
+
 
 // --- CONSUMABLES & ACCESSORIES STOCK MANAGEMENT ---
 let consumablesStock = JSON.parse(localStorage.getItem('argos_consumables')) || [];
@@ -1267,12 +1726,7 @@ function addConsumableItem() {
         return;
     }
 
-    consumablesStock.push({
-        id: 'CONS-' + Date.now(),
-        name: name,
-        qty: qty,
-        minQty: minQty
-    });
+    consumablesStock.push({ id: 'CONS-' + Date.now(), name: name, qty: qty, minQty: minQty });
 
     saveConsumablesData();
     renderConsumablesTable();
@@ -1335,7 +1789,7 @@ function renderConsumablesTable() {
     tbody.innerHTML = html;
 }
 
-// Asset History Modal open karne ka error-free function
+// Asset History Modal open karne ka function
 function openAssetHistory(serial) {
     const modal = document.getElementById('assetHistoryModal');
     const title = document.getElementById('history-modal-title');
@@ -1343,24 +1797,15 @@ function openAssetHistory(serial) {
     
     if (!modal) return;
     
-    const assetList = (typeof assets !== 'undefined' && Array.isArray(assets)) ? assets : [];
-    const asset = assetList.find(a => a.serial === serial);
-    
+    let asset = assets.find(a => a.serial === serial);
     if (title) {
         let catStr = asset ? " (" + asset.category + ")" : "";
         title.innerText = "Asset History: " + serial + catStr;
     }
     
-    let logs = [];
-    if (typeof assignmentHistory !== 'undefined' && Array.isArray(assignmentHistory)) {
-        logs = assignmentHistory.filter(function(h) {
-            return h.serial === serial || (h.details && h.details.includes(serial));
-        });
-    } else if (typeof auditLogs !== 'undefined' && Array.isArray(auditLogs)) {
-        logs = auditLogs.filter(function(h) {
-            return h.details && h.details.includes(serial);
-        });
-    }
+    let logs = auditLogs.filter(function(h) {
+        return h.details && h.details.includes(serial);
+    });
     
     if (!content) return;
 
@@ -1371,9 +1816,9 @@ function openAssetHistory(serial) {
         html += '<tr style="background: #F1F5F9; text-align: left;"><th style="padding: 8px;">Date</th><th style="padding: 8px;">Action</th><th style="padding: 8px;">Details</th></tr>';
         
         logs.forEach(function(h) {
-            let d = h.date || h.timestamp || 'N/A';
-            let act = h.action || 'Log';
-            let det = h.employeeName || h.employee || h.details || 'N/A';
+            let d = h.timestamp || h.date || 'N/A';
+            let act = h.action || h.type || 'Log';
+            let det = h.details || 'N/A';
             html += '<tr style="border-bottom: 1px solid #E2E8F0;"><td style="padding: 8px;">' + d + '</td><td style="padding: 8px; font-weight: 600; color: #2563EB;">' + act + '</td><td style="padding: 8px;">' + det + '</td></tr>';
         });
         html += '</table>';
@@ -1386,4 +1831,845 @@ function openAssetHistory(serial) {
 function closeAssetHistoryModal() {
     const modal = document.getElementById('assetHistoryModal');
     if (modal) modal.style.display = 'none';
+}
+
+window.onload = async function () {
+    // Supabase se actual active session check karein
+    const { data: { session } } = await db.auth.getSession();
+    
+    if (session) {
+        // Agar Supabase mein active session hai
+        const userEmail = session.user.email;
+        sessionStorage.setItem('argos_logged_user', userEmail);
+        
+        // 1. Dashboard UI show karein
+        showDashboardApp();
+        
+        // 2. Supabase se saara fresh data fetch karein
+        if (typeof fetchAssetRequests === 'function') {
+            await fetchAssetRequests();
+        }
+        
+        // 3. Asset requests table ko UI par draw karein
+        if (typeof renderRequestsTable === 'function') {
+            renderRequestsTable();
+        } else if (typeof refreshAllData === 'function') {
+            refreshAllData();
+        }
+    } else {
+        // Agar session nahi hai toh login screen dikhayein
+        sessionStorage.removeItem('argos_logged_user');
+        if (typeof showLoginScreen === 'function') {
+            showLoginScreen();
+        }
+    }
+};
+
+// 1. Supabase Client Init 
+// const { createClient } = supabase;
+// const db = createClient('YOUR_SUPABASE_URL', 'YOUR_SUPABASE_ANON_KEY');
+
+// 2. Login Function
+async function loginUser(email, password) {
+    const { data, error } = await db.auth.signInWithPassword({
+        email: email,
+        password: password
+    });
+
+    if (error) {
+        alert("Login Failed: " + error.message);
+        return false;
+    }
+
+    alert("Login Successful!");
+    sessionStorage.setItem('argos_logged_user', data.user.email);
+    return true;
+}
+
+// 3. Logout Function
+async function logoutUser() {
+    const { error } = await db.auth.signOut();
+    if (error) {
+        alert("Error logging out: " + error.message);
+        return;
+    }
+    sessionStorage.removeItem('argos_logged_user');
+    window.location.reload();
+}
+
+// 4. Session Verification on Page Load
+async function checkAuthSession() {
+    const { data: { session } } = await db.auth.getSession();
+    if (!session) {
+        // Logged out state logic
+        console.log("No active user session");
+    } else {
+        console.log("Logged in user:", session.user.email);
+    }
+}
+
+// Settings se email delete karne ka function
+function removeAccessEmail(emailToRemove) {
+    if (!confirm('Are you sure you want to remove ${emailToRemove} from the list?')) {
+        return;
+    }
+
+    // Global accessEmails array se filter karke hatana
+    accessEmails = accessEmails.filter(e => e !== emailToRemove);
+    
+    // LocalStorage ko update karna
+    localStorage.setItem('argos_access_emails', JSON.stringify(accessEmails));
+    
+    // List ko dobara render karna taaki screen se hat jaye
+    renderAccessEmailsList();
+    
+    alert('${emailToRemove} successfully removed!');
+
+}
+
+function filterAssetsByEmployee(query) {
+    const q = query.toLowerCase().trim();
+    if (!q) return;
+
+    // Filter assets matching assigned employee
+    const matchedAssets = assets.assetData ? assets.assetData.filter(ast => 
+        ast.assignedTo && (
+            ast.assignedTo.toLowerCase().includes(q) || 
+            (ast.empId && ast.empId.toLowerCase().includes(q))
+        )
+    ) : assets.filter(ast => 
+        ast.assignedTo && (
+            ast.assignedTo.toLowerCase().includes(q) || 
+            (ast.empId && ast.empId.toLowerCase().includes(q))
+        )
+    );
+
+    const assetSelect = document.getElementById('select-assigned-asset-dropdown');
+
+if (matchedAssets.length > 0 && assetSelect) {
+    assetSelect.innerHTML = '<option value="">Select asset to transfer...</option>';
+    matchedAssets.forEach((ast, index) => {
+        const option = document.createElement('option');
+        
+        // Exact keys jo inventory table mein use ho rahi hain
+        const aid = ast.assetId || ast.asset_id || ast.id || ast.serial_no || ast.serialNo || ast.tag || `ARG-00${index + 1}`;
+        const category = ast.category || ast.asset_category || ast.type || 'Asset';
+        const aname = ast.assetName || ast.name || ast.asset_name || ast.title || ast.model || '';
+        
+        option.value = aid;
+        
+        // Exact format: ARG-MON-001 - Monitor (Zebronics)
+        if (aname && aname !== category) {
+            option.textContent = `${aid} - ${category} (${aname})`;
+        } else {
+            option.textContent = `${aid} - ${category}`;
+        }
+        
+        assetSelect.appendChild(option);
+    });
+}
+}
+
+
+function populateOldEmployeeDropdown(query = '') {
+    const datalist = document.getElementById('old-employees-datalist');
+    if (!datalist) return;
+    
+    const empList = employees || []; 
+    const q = query.toLowerCase().trim();
+    
+    // Agar query hai toh filter karo, warna saare dikhao
+    const filtered = q === '' ? empList : empList.filter(emp => {
+        const name = (emp.name || emp.employeeName || emp.fullName || '').toLowerCase();
+        const id = (emp.empId || emp.id || '').toLowerCase();
+        return name.includes(q) || id.includes(q);
+    });
+    
+    datalist.innerHTML = '';
+    filtered.forEach(emp => {
+        const option = document.createElement('option');
+        const empName = emp.name || emp.employeeName || emp.fullName;
+        const empId = emp.empId || emp.id || '';
+        
+        option.value = `${empName} (${empId})`;
+        datalist.appendChild(option);
+    });
+}
+
+function fillOldEmployeeFromAsset(selectedAssetId) {
+    const oldEmpInput = document.getElementById('transfer-old-emp');
+    if (!oldEmpInput) return;
+    
+    if (!selectedAssetId) {
+        oldEmpInput.value = '';
+        return;
+    }
+    
+    // matchedAssets ya global assets array se asset find karo
+    const allAssets = (typeof assets !== 'undefined' ? assets.assetData || assets : []);
+    const foundAsset = allAssets.find(ast => {
+        const aid = ast.assetId || ast.asset_id || ast.id || ast.serial_no || ast.serialNo || ast.tag;
+        return aid === selectedAssetId;
+    });
+    
+    if (foundAsset) {
+        // Employee ki field check karein jo asset ko assigned hai
+        const holder = foundAsset.assignedTo || foundAsset.employeeName || foundAsset.holder || 'N/A';
+        oldEmpInput.value = holder;
+    } else {
+        // Agar upar wale se na mile toh jo old employee search mein dala tha wahi utha lo
+        const searchEmp = document.getElementById('search-old-employee');
+        oldEmpInput.value = searchEmp ? searchEmp.value : '';
+    }
+}
+
+// Datalist mein employees populate karne ke liye function
+function populateEmployeeDatalists() {
+    const empList = (typeof employees !== 'undefined' ? employees : []);
+    
+    // 1. Old Employee Datalist
+    const oldDatalist = document.getElementById('old-employees-datalist');
+    if (oldDatalist) {
+        oldDatalist.innerHTML = '';
+        empList.forEach(emp => {
+            const option = document.createElement('option');
+            const empName = emp.name || emp.employeeName || emp.fullName || '';
+            const empId = emp.empId || emp.id || '';
+            option.value = `${empName} (${empId})`;
+            oldDatalist.appendChild(option);
+        });
+    }
+    
+    // 2. New Employee Datalist
+    const newDatalist = document.getElementById('new-employees-datalist');
+    if (newDatalist) {
+        newDatalist.innerHTML = '';
+        empList.forEach(emp => {
+            const option = document.createElement('option');
+            const empName = emp.name || emp.employeeName || emp.fullName || '';
+            const empId = emp.empId || emp.id || '';
+            const empDept = emp.department || emp.dept || '';
+            option.value = `${empName} (${empId})${empDept ? ' - ' + empDept : ''}`;
+            newDatalist.appendChild(option);
+        });
+    }
+}
+
+// Page load hone par datalist ko populate karne ke liye
+document.addEventListener('DOMContentLoaded', () => {
+    populateEmployeeDatalists();
+});
+
+// 1. Employees ko dropdowns mein populate karne ke liye
+function populateEmployeeDropdowns() {
+    const empList = (typeof employees !== 'undefined' ? employees : []);
+    
+    const oldEmpSelect = document.getElementById('search-old-employee');
+    const newEmpSelect = document.getElementById('transfer-new-emp-select');
+    
+    if (oldEmpSelect) {
+        oldEmpSelect.innerHTML = '<option value="">Select old employee...</option>';
+        empList.forEach(emp => {
+            const opt = document.createElement('option');
+            const name = emp.name || emp.employeeName || '';
+            const id = emp.id || emp.empId || '';
+            opt.value = id; // ID store hogi backend ke liye
+            opt.textContent = `${name} (${id})`;
+            oldEmpSelect.appendChild(opt);
+        });
+    }
+    
+    if (newEmpSelect) {
+        newEmpSelect.innerHTML = '<option value="">Select new employee...</option>';
+        empList.forEach(emp => {
+            const opt = document.createElement('option');
+            const name = emp.name || emp.employeeName || '';
+            const id = emp.id || emp.empId || '';
+            const dept = emp.department || emp.dept || '';
+            opt.value = id;
+            opt.textContent = `${name} (${id})${dept ? ' - ' + dept : ''}`;
+            newEmpSelect.appendChild(opt);
+        });
+    }
+}
+
+// 2. Old Employee select hote hi uske assigned assets load karna
+function filterAssetsForOldEmployee(empId) {
+    const assetDropdown = document.getElementById('select-assigned-asset-dropdown');
+    const oldEmpInput = document.getElementById('transfer-old-emp');
+    
+    if (!assetDropdown) return;
+    assetDropdown.innerHTML = '<option value="">Select asset to transfer...</option>';
+    
+    if (!empId) {
+        if (oldEmpInput) oldEmpInput.value = '';
+        return;
+    }
+    
+    // Employee ka naam dhoondo
+    const emp = employees.find(e => (e.id || e.empId) === empId);
+    if (oldEmpInput && emp) {
+        oldEmpInput.value = `${emp.name || emp.employeeName} (${emp.id || emp.empId})`;
+    }
+    
+    // Us employee ko assigned assets filter karo
+    // emp.assigned array ho sakta hai ya assets list mein assignedTo match hoga
+    const empAssignedSerials = emp && emp.assigned ? emp.assigned : [];
+    
+    const assignedAssets = assets.filter(a => {
+        const aid = a.assignedTo || a.employeeId || a.empId;
+        const serial = a.serial || a.assetId || a.asset_id || a.id;
+        return aid === empId || empAssignedSerials.includes(serial);
+    });
+    
+    assignedAssets.forEach(ast => {
+        const opt = document.createElement('option');
+        const serial = ast.serial || ast.assetId || ast.asset_id || ast.id;
+        const category = ast.category || ast.type || 'Asset';
+        const model = ast.model || ast.name || '';
+        
+        opt.value = serial;
+        opt.textContent = `${serial} - ${category} (${model})`;
+        assetDropdown.appendChild(opt);
+    });
+}
+
+// Page load par call karein
+document.addEventListener('DOMContentLoaded', () => {
+    populateEmployeeDropdowns();
+});
+
+// Datalist populate karne ke liye
+function populateEmployeeDatalists() {
+    const empList = (typeof employees !== 'undefined' ? employees : []);
+    
+    const oldDatalist = document.getElementById('old-employees-datalist');
+    const newDatalist = document.getElementById('new-employees-datalist');
+    
+    if (oldDatalist) {
+        oldDatalist.innerHTML = '';
+        empList.forEach(emp => {
+            const opt = document.createElement('option');
+            const name = emp.name || emp.employeeName || '';
+            const id = emp.id || emp.empId || '';
+            opt.value = `${name} (${id})`;
+            oldDatalist.appendChild(opt);
+        });
+    }
+    
+    if (newDatalist) {
+        newDatalist.innerHTML = '';
+        empList.forEach(emp => {
+            const opt = document.createElement('option');
+            const name = emp.name || emp.employeeName || '';
+            const id = emp.id || emp.empId || '';
+            const dept = emp.department || emp.dept || '';
+            opt.value = `${name} (${id})${dept ? ' - ' + dept : ''}`;
+            newDatalist.appendChild(opt);
+        });
+    }
+}
+
+// Old Employee type/select hone par assets filter karna
+function checkOldEmployeeSelection() {
+    const val = document.getElementById('search-old-employee').value;
+    const assetDropdown = document.getElementById('select-assigned-asset-dropdown');
+    const oldEmpInput = document.getElementById('transfer-old-emp');
+    
+    if (!assetDropdown) return;
+    assetDropdown.innerHTML = '<option value="">Select asset to transfer...</option>';
+    
+    // ID ya Name extract karo
+    let empId = '';
+    if (val.includes('(') && val.includes(')')) {
+        const match = val.match(/\(([^)]+)\)/);
+        empId = match ? match[1].replace('ID: ', '').trim() : '';
+    }
+    
+    const emp = employees.find(e => (e.id || e.empId) === empId || `${e.name} (${e.id || e.empId})` === val);
+    
+    if (!emp) {
+        if (oldEmpInput) oldEmpInput.value = '';
+        return;
+    }
+    
+    if (oldEmpInput) {
+        oldEmpInput.value = `${emp.name || emp.employeeName} (${emp.id || emp.empId})`;
+    }
+    
+    // Us employee ke assigned assets nikalo
+    const empAssignedSerials = emp.assigned || [];
+    const assignedAssets = assets.filter(a => {
+        const aid = a.assignedTo || a.employeeId || a.empId;
+        const serial = a.serial || a.assetId || a.asset_id || a.id;
+        return aid === emp.id || aid === emp.empId || empAssignedSerials.includes(serial);
+    });
+    
+    assignedAssets.forEach(ast => {
+        const opt = document.createElement('option');
+        const serial = ast.serial || ast.assetId || ast.asset_id || ast.id;
+        const category = ast.category || ast.type || 'Asset';
+        const model = ast.model || ast.name || '';
+        opt.value = serial;
+        opt.textContent = `${serial} - ${category} (${model})`;
+        assetDropdown.appendChild(opt);
+    });
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    populateEmployeeDatalists();
+});
+
+// --- CENTRALIZED & CENTERED NOTIFICATION/ALERT HELPER ---
+function showCenterAlert(message) {
+    // Purana alert hatao agar ho
+    const existing = document.getElementById('custom-center-alert');
+    if (existing) existing.remove();
+
+    const alertBox = document.createElement('div');
+    alertBox.id = 'custom-center-alert';
+    alertBox.style.cssText = `
+        position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+        background: #ffffff; padding: 24px 32px; border-radius: 12px;
+        box-shadow: 0 10px 30px rgba(0,0,0,0.25); z-index: 99999;
+        text-align: center; border: 1px solid #e2e8f0; min-width: 300px;
+    `;
+    alertBox.innerHTML = `
+        <p style="font-size: 15px; font-weight: 600; color: #1e293b; margin-bottom: 16px;">${message}</p>
+        <button onclick="document.getElementById('custom-center-alert').remove()" style="background: #2563eb; color: #fff; border: none; padding: 8px 20px; border-radius: 6px; cursor: pointer; font-weight: 600;">OK</button>
+    `;
+    document.body.appendChild(alertBox);
+}
+
+// --- CUSTOM SEARCHABLE DROPDOWN LOGIC ---
+function openEmpDropdown(type) {
+    const otherList = document.getElementById(type === 'old' ? 'new-emp-custom-list' : 'old-emp-custom-list');
+    if (otherList) otherList.style.display = 'none';
+    filterEmpDropdown(type);
+}
+
+function filterEmpDropdown(type) {
+    const input = document.getElementById(type === 'old' ? 'search-old-employee' : 'transfer-new-emp-select');
+    const listDiv = document.getElementById(type === 'old' ? 'old-emp-custom-list' : 'new-emp-custom-list');
+    if (!input || !listDiv) return;
+
+    const query = input.value.toLowerCase().trim();
+    const empList = (typeof employees !== 'undefined' ? employees : []);
+
+    // Jo naam query se match kare ya shuru ho, use upar rakho
+    const filtered = empList.filter(emp => {
+        const name = (emp.name || emp.employeeName || '').toLowerCase();
+        const id = (emp.id || emp.empId || '').toLowerCase();
+        return name.includes(query) || id.includes(query);
+    }).sort((a, b) => {
+        const nameA = (a.name || a.employeeName || '').toLowerCase();
+        const nameB = (b.name || b.employeeName || '').toLowerCase();
+        const aStarts = nameA.startsWith(query);
+        const bStarts = nameB.startsWith(query);
+        if (aStarts && !bStarts) return -1;
+        if (!aStarts && bStarts) return 1;
+        return nameA.localeCompare(nameB);
+    });
+
+    listDiv.innerHTML = '';
+    if (filtered.length === 0) {
+        listDiv.innerHTML = '<div style="padding: 10px 14px; color: #64748b; font-size: 13px;">No employee found</div>';
+    } else {
+        filtered.forEach(emp => {
+            const name = emp.name || emp.employeeName || '';
+            const id = emp.id || emp.empId || '';
+            const dept = emp.department || emp.dept || '';
+            
+            const item = document.createElement('div');
+            item.style.cssText = 'padding: 10px 14px; cursor: pointer; font-size: 13.5px; border-bottom: 1px solid #f1f5f9; transition: background 0.15s;';
+            item.innerHTML = `<strong>${name}</strong> <span style="color: #64748b; font-size: 12px;">(${id}${dept ? ' - ' + dept : ''})</span>`;
+            
+            item.onmouseover = () => item.style.background = '#f1f5f9';
+            item.onmouseout = () => item.style.background = '#ffffff';
+            item.onclick = () => selectEmpFromDropdown(type, id, name);
+            
+            listDiv.appendChild(item);
+        });
+    }
+    listDiv.style.display = 'block';
+}
+
+function selectEmpFromDropdown(type, empId, empName) {
+    const input = document.getElementById(type === 'old' ? 'search-old-employee' : 'transfer-new-emp-select');
+    const hiddenId = document.getElementById(type === 'old' ? 'selected-old-emp-id' : 'selected-new-emp-id');
+    const listDiv = document.getElementById(type === 'old' ? 'old-emp-custom-list' : 'new-emp-custom-list');
+
+    if (input) input.value = `${empName} (${empId})`;
+    if (hiddenId) hiddenId.value = empId;
+    if (listDiv) listDiv.style.display = 'none';
+
+    if (type === 'old') {
+        const oldEmpDisplay = document.getElementById('transfer-old-emp');
+        if (oldEmpDisplay) oldEmpDisplay.value = `${empName} (${empId})`;
+        loadAssetsForSelectedOldEmployee(empId);
+    }
+}
+
+function loadAssetsForSelectedOldEmployee(empId) {
+    const assetDropdown = document.getElementById('select-assigned-asset-dropdown');
+    if (!assetDropdown) return;
+
+    const emp = employees.find(e => (e.id || e.empId) === empId);
+    const empAssignedSerials = (emp && Array.isArray(emp.assigned)) ? emp.assigned : [];
+
+    const assignedAssets = assets.filter(a => {
+        const assignedTo = a.assignedTo || a.employeeId || a.empId;
+        const serial = a.serial || a.assetId || a.asset_id || a.id;
+        return assignedTo === empId || empAssignedSerials.includes(serial);
+    });
+
+    assetDropdown.innerHTML = '';
+    if (assignedAssets.length === 0) {
+        assetDropdown.innerHTML = '<option value="">No assets assigned to this employee</option>';
+        return;
+    }
+
+    assetDropdown.innerHTML = '<option value="">-- Select asset to transfer --</option>';
+    assignedAssets.forEach(ast => {
+        const serial = ast.serial || ast.assetId || ast.asset_id || ast.id;
+        const category = ast.category || ast.type || 'Asset';
+        const model = ast.model || ast.name || '';
+        
+        const opt = document.createElement('option');
+        opt.value = serial;
+        opt.textContent = `${serial} - ${category} (${model})`;
+        assetDropdown.appendChild(opt);
+    });
+}
+
+// Bahar click karne par dropdown band ho jaye
+document.addEventListener('click', function(e) {
+    if (!e.target.closest('#search-old-employee') && !e.target.closest('#old-emp-custom-list')) {
+        const oldList = document.getElementById('old-emp-custom-list');
+        if (oldList) oldList.style.display = 'none';
+    }
+    if (!e.target.closest('#transfer-new-emp-select') && !e.target.closest('#new-emp-custom-list')) {
+        const newList = document.getElementById('new-emp-custom-list');
+        if (newList) newList.style.display = 'none';
+    }
+});
+
+// --- TRANSFER ASSET CORE FUNCTION ---
+async function transferAsset(e) {
+    if (e) e.preventDefault();
+
+    const selectedSerial = document.getElementById('select-assigned-asset-dropdown')?.value || '';
+    const newEmpId = document.getElementById('selected-new-emp-id')?.value || '';
+    const reason = document.getElementById('transfer-reason')?.value.trim() || 'No reason provided';
+
+    if (!selectedSerial) {
+        showCenterAlert("Please select an asset to transfer!");
+        return;
+    }
+    if (!newEmpId) {
+        showCenterAlert("Please select a valid New Employee from the dropdown list!");
+        return;
+    }
+
+    const asset = assets.find(a => (a.serial || a.assetId || a.asset_id || a.id) === selectedSerial);
+    const newEmp = employees.find(em => (em.id || em.empId) === newEmpId);
+
+    if (!asset || !newEmp) {
+        showCenterAlert("Invalid selection! Please select employee and asset properly.");
+        return;
+    }
+
+    const oldEmp = employees.find(em => (em.id || em.empId) === asset.assignedTo);
+    if (oldEmp && (oldEmp.id || oldEmp.empId) === (newEmp.id || newEmp.empId)) {
+        showCenterAlert("Asset is already assigned to this employee!");
+        return;
+    }
+
+    const oldEmpName = oldEmp ? `${oldEmp.name} (${oldEmp.id})` : 'Unassigned / Stock';
+
+    // 1. Old Employee se asset hatao
+    if (oldEmp) {
+        oldEmp.assigned = (oldEmp.assigned || []).filter(s => s !== asset.serial);
+        if (typeof db !== 'undefined') {
+            await db.from('employees').update({ assigned: oldEmp.assigned }).eq('id', oldEmp.id);
+        }
+    }
+
+    // 2. New Employee mein asset add karo
+    if (!newEmp.assigned) newEmp.assigned = [];
+    if (!newEmp.assigned.includes(asset.serial)) {
+        newEmp.assigned.push(asset.serial);
+        if (typeof db !== 'undefined') {
+            await db.from('employees').update({ assigned: newEmp.assigned }).eq('id', newEmp.id);
+        }
+    }
+
+    // 3. Asset holder update karo
+    asset.assignedTo = newEmp.id;
+    if (typeof db !== 'undefined') {
+        await db.from('assets').update({ assigned_to: newEmp.id }).eq('serial_tag', asset.serial);
+    }
+
+    // 4. Audit Log entry
+    const logDetails = `Asset ${asset.serial} transferred from ${oldEmpName} to ${newEmp.name} (${newEmp.id}) | Reason: ${reason}`;
+    const newLog = { 
+        timestamp: new Date().toLocaleString(), 
+        action: 'Asset Transferred', 
+        details: logDetails, 
+        user: typeof currentUser !== 'undefined' ? currentUser : 'Admin' 
+    };
+    if (typeof auditLogs !== 'undefined') auditLogs.push(newLog);
+    if (typeof db !== 'undefined') {
+        await db.from('audit_logs').insert([newLog]);
+    }
+
+    if (typeof saveData === 'function') saveData();
+    if (typeof refreshAllData === 'function') refreshAllData();
+
+    // Form clear karo
+    document.getElementById('search-old-employee').value = '';
+    document.getElementById('selected-old-emp-id').value = '';
+    document.getElementById('transfer-old-emp').value = '';
+    document.getElementById('select-assigned-asset-dropdown').innerHTML = '<option value="">First select an old employee...</option>';
+    document.getElementById('transfer-new-emp-select').value = '';
+    document.getElementById('selected-new-emp-id').value = '';
+    document.getElementById('transfer-reason').value = '';
+
+    showCenterAlert("Asset successfully transferred!");
+}
+
+// Global alert override taaki saare alerts center mein aayein
+window.alert = function(message) {
+    const existing = document.getElementById('custom-center-alert');
+    if (existing) existing.remove();
+
+    const alertBox = document.createElement('div');
+    alertBox.id = 'custom-center-alert';
+    alertBox.style.cssText = `
+        position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+        background: #ffffff; padding: 24px 32px; border-radius: 12px;
+        box-shadow: 0 10px 30px rgba(0,0,0,0.25); z-index: 99999;
+        text-align: center; border: 1px solid #e2e8f0; min-width: 300px;
+    `;
+    alertBox.innerHTML = `
+        <p style="font-size: 15px; font-weight: 600; color: #1e293b; margin-bottom: 16px;">${message}</p>
+        <button onclick="document.getElementById('custom-center-alert').remove()" style="background: #2563eb; color: #fff; border: none; padding: 8px 20px; border-radius: 6px; cursor: pointer; font-weight: 600;">OK</button>
+    `;
+    document.body.appendChild(alertBox);
+};
+
+// --- RETURN ASSET SEARCHABLE DROPDOWN & BULK RETURN LOGIC ---
+
+function openReturnEmpDropdown() {
+    filterReturnEmpDropdown();
+}
+
+function filterReturnEmpDropdown() {
+    const input = document.getElementById('return-employee-search');
+    const listDiv = document.getElementById('return-emp-custom-list');
+    if (!input || !listDiv) return;
+
+    const query = input.value.toLowerCase().trim();
+    const empList = (typeof employees !== 'undefined' ? employees : []);
+
+    const filtered = empList.filter(emp => {
+        const name = (emp.name || emp.employeeName || '').toLowerCase();
+        const id = (emp.id || emp.empId || '').toLowerCase();
+        return name.includes(query) || id.includes(query);
+    }).sort((a, b) => {
+        const nameA = (a.name || a.employeeName || '').toLowerCase();
+        const nameB = (b.name || b.employeeName || '').toLowerCase();
+        const aStarts = nameA.startsWith(query);
+        const bStarts = nameB.startsWith(query);
+        if (aStarts && !bStarts) return -1;
+        if (!aStarts && bStarts) return 1;
+        return nameA.localeCompare(nameB);
+    });
+
+    listDiv.innerHTML = '';
+    if (filtered.length === 0) {
+        listDiv.innerHTML = '<div style="padding: 10px 14px; color: #64748b; font-size: 13px;">No employee found</div>';
+    } else {
+        filtered.forEach(emp => {
+            const name = emp.name || emp.employeeName || '';
+            const id = emp.id || emp.empId || '';
+            const dept = emp.department || emp.dept || '';
+            
+            const item = document.createElement('div');
+            item.style.cssText = 'padding: 10px 14px; cursor: pointer; font-size: 13.5px; border-bottom: 1px solid #f1f5f9; transition: background 0.15s;';
+            item.innerHTML = `<strong>${name}</strong> <span style="color: #64748b; font-size: 12px;">(${id}${dept ? ' - ' + dept : ''})</span>`;
+            
+            item.onmouseover = () => item.style.background = '#f1f5f9';
+            item.onmouseout = () => item.style.background = '#ffffff';
+            item.onclick = () => selectReturnEmployee(id, name);
+            
+            listDiv.appendChild(item);
+        });
+    }
+    listDiv.style.display = 'block';
+}
+
+function selectReturnEmployee(empId, empName) {
+    const input = document.getElementById('return-employee-search');
+    const hiddenId = document.getElementById('selected-return-emp-id');
+    const listDiv = document.getElementById('return-emp-custom-list');
+    const holderInput = document.getElementById('return-current-holder');
+
+    if (input) input.value = `${empName} (${empId})`;
+    if (hiddenId) hiddenId.value = empId;
+    if (listDiv) listDiv.style.display = 'none';
+    if (holderInput) holderInput.value = `${empName} (${empId})`;
+
+    loadAssetsForReturnEmployee(empId);
+}
+
+function loadAssetsForReturnEmployee(empId) {
+    const assetDropdown = document.getElementById('return-asset-dropdown');
+    if (!assetDropdown) return;
+
+    const emp = employees.find(e => (e.id || e.empId) === empId);
+    const empAssignedSerials = (emp && Array.isArray(emp.assigned)) ? emp.assigned : [];
+
+    const assignedAssets = assets.filter(a => {
+        const assignedTo = a.assignedTo || a.employeeId || a.empId;
+        const serial = a.serial || a.assetId || a.asset_id || a.id;
+        return assignedTo === empId || empAssignedSerials.includes(serial);
+    });
+
+    assetDropdown.innerHTML = '';
+    if (assignedAssets.length === 0) {
+        assetDropdown.innerHTML = '<option value="">No assets assigned to this employee</option>';
+        return;
+    }
+
+    assetDropdown.innerHTML = '<option value="">-- Select asset to return --</option>';
+    
+    // * RETURN ALL ASSETS OPTION *
+    const allOpt = document.createElement('option');
+    allOpt.value = 'RETURN_ALL';
+    allOpt.textContent = `🚀 Return All Assets (${assignedAssets.length} Assets)`;
+    allOpt.style.fontWeight = 'bold';
+    allOpt.style.color = '#0d9488';
+    assetDropdown.appendChild(allOpt);
+
+    assignedAssets.forEach(ast => {
+        const serial = ast.serial || ast.assetId || ast.asset_id || ast.id;
+        const category = ast.category || ast.type || 'Asset';
+        const model = ast.model || ast.name || '';
+        
+        const opt = document.createElement('option');
+        opt.value = serial;
+        opt.textContent = `${serial} - ${category} (${model})`;
+        assetDropdown.appendChild(opt);
+    });
+}
+
+// Bahar click karne par dropdown band ho jaye
+document.addEventListener('click', function(e) {
+    if (!e.target.closest('#return-employee-search') && !e.target.closest('#return-emp-custom-list')) {
+        const list = document.getElementById('return-emp-custom-list');
+        if (list) list.style.display = 'none';
+    }
+});
+
+// --- SUBMIT RETURN ASSET ---
+async function returnAssetToStock(e) {
+    if (e) e.preventDefault();
+
+    const empId = document.getElementById('selected-return-emp-id')?.value || '';
+    const selectedVal = document.getElementById('return-asset-dropdown')?.value || '';
+    const reason = document.getElementById('return-reason')?.value.trim() || 'Returned to stock';
+
+    if (!empId) {
+        showCenterAlert("Please select an employee!");
+        return;
+    }
+    if (!selectedVal) {
+        showCenterAlert("Please select an asset or 'Return All Assets'!");
+        return;
+    }
+
+    const emp = employees.find(em => (em.id || em.empId) === empId);
+    if (!emp) {
+        showCenterAlert("Invalid employee selection!");
+        return;
+    }
+
+    const empAssignedSerials = (emp && Array.isArray(emp.assigned)) ? emp.assigned : [];
+    const empAssets = assets.filter(a => {
+        const assignedTo = a.assignedTo || a.employeeId || a.empId;
+        const serial = a.serial || a.assetId || a.asset_id || a.id;
+        return assignedTo === empId || empAssignedSerials.includes(serial);
+    });
+
+    if (selectedVal === 'RETURN_ALL') {
+        // --- BULK RETURN ALL ASSETS ---
+        for (const ast of empAssets) {
+            ast.assignedTo = null;
+            if (typeof db !== 'undefined') {
+                await db.from('assets').update({ assigned_to: null }).eq('serial_tag', ast.serial);
+            }
+        }
+        
+        const count = empAssets.length;
+        emp.assigned = [];
+        if (typeof db !== 'undefined') {
+            await db.from('employees').update({ assigned: [] }).eq('id', emp.id);
+        }
+
+        const logDetails = `All ${count} assets returned to stock from ${emp.name} (${emp.id}) | Reason: ${reason}`;
+        const newLog = { 
+            timestamp: new Date().toLocaleString(), 
+            action: 'Assets Returned (Bulk)', 
+            details: logDetails, 
+            user: typeof currentUser !== 'undefined' ? currentUser : 'Admin' 
+        };
+        if (typeof auditLogs !== 'undefined') auditLogs.push(newLog);
+        if (typeof db !== 'undefined') {
+            await db.from('audit_logs').insert([newLog]);
+        }
+
+        showCenterAlert(`Successfully returned all ${count} assets to stock!`);
+    } else {
+        // --- SINGLE ASSET RETURN ---
+        const asset = assets.find(a => (a.serial || a.assetId || a.asset_id || a.id) === selectedVal);
+        if (!asset) {
+            showCenterAlert("Selected asset not found!");
+            return;
+        }
+
+        emp.assigned = (emp.assigned || []).filter(s => s !== asset.serial);
+        if (typeof db !== 'undefined') {
+            await db.from('employees').update({ assigned: emp.assigned }).eq('id', emp.id);
+        }
+
+        asset.assignedTo = null;
+        if (typeof db !== 'undefined') {
+            await db.from('assets').update({ assigned_to: null }).eq('serial_tag', asset.serial);
+        }
+
+        const logDetails = `Asset ${asset.serial} returned to stock from ${emp.name} (${emp.id}) | Reason: ${reason}`;
+        const newLog = { 
+            timestamp: new Date().toLocaleString(), 
+            action: 'Asset Returned', 
+            details: logDetails, 
+            user: typeof currentUser !== 'undefined' ? currentUser : 'Admin' 
+        };
+        if (typeof auditLogs !== 'undefined') auditLogs.push(newLog);
+        if (typeof db !== 'undefined') {
+            await db.from('audit_logs').insert([newLog]);
+        }
+
+        showCenterAlert("Asset successfully returned to stock!");
+    }
+
+    if (typeof saveData === 'function') saveData();
+    if (typeof refreshAllData === 'function') refreshAllData();
+
+    // Form clear karo
+    document.getElementById('return-employee-search').value = '';
+    document.getElementById('selected-return-emp-id').value = '';
+    document.getElementById('return-current-holder').value = '';
+    document.getElementById('return-asset-dropdown').innerHTML = '<option value="">First select an employee...</option>';
+    document.getElementById('return-reason').value = '';
 }
