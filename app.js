@@ -4,6 +4,25 @@ if (!window.mySupabase) {
 }
 const db = window.mySupabase;
 
+// Check if user is logged in via Supabase session on page load
+db.auth.getSession().then(({ data: { session } }) => {
+    if (!session) {
+        console.log("No active session found, redirecting to login...");
+        // Agar aapka login page koi alag file hai toh yahan uncomment kar dein:
+        // window.location.href = 'login.html'; 
+    } else {
+        console.log("User session active:", session.user.email);
+    }
+});
+
+// Listen for auth changes (Login, Logout, Refresh)
+db.auth.onAuthStateChange((event, session) => {
+    if (event === 'SIGNED_OUT' || !session) {
+        console.log("User signed out or session expired.");
+        // window.location.href = 'login.html';
+    }
+});
+
 // --- PART 1: Initialization, State & Navigation ---
 
 let assets = [];
