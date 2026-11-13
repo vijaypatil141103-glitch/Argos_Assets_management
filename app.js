@@ -1,25 +1,54 @@
-// SUPABASE SAFE SETUP
-if (!window.mySupabase) {
-    window.mySupabase = window.supabase.createClient("https://ukuzqhevfpzsufomsalp.supabase.co", "sb_publishable_MJzNY_Jf5md4UxyRRxyo7g_3L0ULc8i");
-}
-const db = window.mySupabase;
+const db = window.mySupabase || window.supabase.createClient(
+    "https://ukuzqhevfpzsufomsalp.supabase.co",
+    "sb_publishable_MJzNY_Jf5md4UxyRRxyo7g_3L0ULc8i"
+);
+window.mySupabase = db;
 
-// Check if user is logged in via Supabase session on page load
-db.auth.getSession().then(({ data: { session } }) => {
-    if (!session) {
-        console.log("No active session found, redirecting to login...");
-        // Agar aapka login page koi alag file hai toh yahan uncomment kar dein:
-        // window.location.href = 'login.html'; 
-    } else {
-        console.log("User session active:", session.user.email);
+// --- LOGIN-FIRST PAGE LOAD HANDLER ---
+window.onload = async function () {
+    if (typeof showLoginScreen === 'function') {
+        showLoginScreen();
     }
-});
 
-// Listen for auth changes (Login, Logout, Refresh)
+    const { data: { session } } = await db.auth.getSession();
+
+    if (session) {
+        sessionStorage.setItem('argos_logged_user', session.user.email);
+
+        if (typeof showDashboardApp === 'function') {
+            showDashboardApp();
+        }
+
+        if (typeof fetchAssetRequests === 'function') {
+            await fetchAssetRequests();
+        }
+
+        if (typeof renderRequestsTable === 'function') {
+            renderRequestsTable();
+        } else if (typeof refreshAllData === 'function') {
+            refreshAllData();
+        }
+    } else {
+        sessionStorage.removeItem('argos_logged_user');
+        if (typeof showLoginScreen === 'function') {
+            showLoginScreen();
+        }
+    }
+};
+
+async function logoutSystem() {
+    if (typeof stopQrScanner === 'function') stopQrScanner();
+    await db.auth.signOut();
+    sessionStorage.removeItem('argos_logged_user');
+    showLoginScreen();
+}
+
 db.auth.onAuthStateChange((event, session) => {
     if (event === 'SIGNED_OUT' || !session) {
-        console.log("User signed out or session expired.");
-        // window.location.href = 'login.html';
+        sessionStorage.removeItem('argos_logged_user');
+        if (typeof showLoginScreen === 'function') {
+            showLoginScreen();
+        }
     }
 });
 
@@ -81,9 +110,7 @@ async function fetchAssetsFromSupabase() {
                 maintenanceLogs: item.maintenance_logs || []
             };
         });
-
         console.log("Assets with formatted status loaded:", assets);
-
     } catch (err) {
         console.error("Execution error:", err);
     }
@@ -118,7 +145,14 @@ async function fetchRequestsFromSupabase() {
             console.error("Supabase error fetching requests:", error);
             return;
         }
-        assetRequests = data || [];
+        assetRequests = (data || []).map(r => ({
+            id: r.id,
+            date: r.date || new Date(r.created_at).toLocaleDateString(),
+            empId: r.emp_id || r.empId,
+            empName: r.emp_name || r.empName,
+            details: r.details,
+            status: r.status || 'Pending'
+        }));
         console.log("Supabase asset requests loaded:", assetRequests);
     } catch (err) {
         console.error("Requests fetch error:", err);
@@ -142,84 +176,35 @@ async function fetchAuditLogsFromSupabase() {
     }
 }
 
-async function submitAssetRequest(e) {
-    if (e) e.preventDefault();
-    console.log("Submit request initiated...");
-
-    try {
-        const idEl = document.getElementById('req-emp-id');
-        const nameEl = document.getElementById('req-emp-name');
-        const detailsEl = document.getElementById('req-details');
-
-        if (!idEl || !nameEl || !detailsEl) {
-            alert("Error: Input fields HTML me nahi mile! IDs check karein.");
-            return;
-        }
-
-        const id = idEl.value.trim();
-        const name = nameEl.value.trim();
-        const details = detailsEl.value.trim();
-
-        const newReq = { 
-            date: new Date().toLocaleDateString(), 
-            emp_id: id, 
-            emp_name: name, 
-            details: details, 
-            status: 'Pending' 
-        };
-
-        console.log("Sending to Supabase:", newReq);
-
-        // 1. Database insert
-        const { data, error } = await db.from('asset_requests').insert([newReq]);
-        
-        if (error) {
-            console.error("Supabase Error:", error);
-            alert("Database Error: " + error.message);
-            return;
-        }
-
-        console.log("Inserted successfully, closing modal...");
-
-        // 2. Modal close
-        if (typeof closeRequestModal === 'function') {
-            closeRequestModal();
-        }
-
-        // 3. Fresh data fetch & render
-        if (typeof fetchAssetRequests === 'function') {
-            await fetchAssetRequests();
-        }
-
-        if (typeof renderRequestsTable === 'function') {
-            renderRequestsTable();
-        } else if (typeof refreshAllData === 'function') {
-            refreshAllData();
-        }
-
-        alert("Request submitted successfully!");
-
-    } catch (err) {
-        console.error("Unexpected Error:", err);
-        alert("Script Error: " + err.message);
-    }
-}
-
-function handleCombinedLogin(e) {
+async function handleCombinedLogin(e) {
     if (e) e.preventDefault();
     const emailInput = document.getElementById('login-email-input');
     const passInput = document.getElementById('login-pass-input');
     
-    const enteredEmail = emailInput ? emailInput.value.trim() : 'admin@argoswatch.com';
+    const enteredEmail = emailInput ? emailInput.value.trim() : '';
     const enteredPass = passInput ? passInput.value.trim() : '';
-    const currentAdminPass = adminPassword || localStorage.getItem('argos_admin_pass') || 'admin123';
     
-    if (enteredPass === currentAdminPass) {
-        sessionStorage.setItem('argos_logged_user', enteredEmail || 'Admin');
-        showDashboardApp();
-    } else {
-        alert('Invalid Password! Please enter the correct password.');
+    if (!enteredEmail || !enteredPass) {
+        alert("Please enter both email and password!");
+        return;
+    }
+
+    const { data, error } = await db.auth.signInWithPassword({
+        email: enteredEmail,
+        password: enteredPass
+    });
+
+    if (error) {
+        alert("Login Failed: " + error.message);
         if (passInput) passInput.value = '';
+        return;
+    }
+
+    alert("Login Successful!");
+    sessionStorage.setItem('argos_logged_user', data.user.email);
+    
+    if (typeof showDashboardApp === 'function') {
+        showDashboardApp();
     }
 }
 
@@ -248,12 +233,6 @@ function showDashboardApp() {
     
     switchTab('dashboard');
     refreshAllData();
-}
-
-function logoutSystem() {
-    if (typeof stopQrScanner === 'function') stopQrScanner();
-    sessionStorage.removeItem('argos_logged_user');
-    showLoginScreen();
 }
 
 function switchTab(tabId) {
@@ -444,7 +423,6 @@ function renderAuditLogs() {
     
     if (!tbody) return;
     tbody.innerHTML = '';
-
     let filteredLogs = auditLogs.filter(log => {
         let textMatch = (log.timestamp && log.timestamp.toLowerCase().includes(query)) || 
                         (log.date && log.date.toLowerCase().includes(query)) || 
@@ -728,7 +706,6 @@ function openEmployeeChallanModal(empId) {
         setTimeout(initSignaturePad, 100);
     }
 }
-
 function sendChallanEmail(empId) {
     const emp = employees.find(e => e.id === empId);
     if (!emp || !emp.email) { alert("Employee email not found!"); return; }
@@ -773,8 +750,6 @@ function clearSignature() {
     }
 }
 
-// --- PART 5: Workflows, Modals, Dynamic Categories & Helpers ---
-
 async function assignAsset(e) {
     if (e) e.preventDefault();
     const rawVal = document.getElementById('modal-assign-search').value.trim();
@@ -791,9 +766,7 @@ async function assignAsset(e) {
     asset.assignedTo = emp.id;
     if (!emp.assigned.includes(asset.serial)) emp.assigned.push(asset.serial);
 
-    // Supabase update for asset
     await db.from('assets').update({ status: 'Assigned', assigned_to: emp.id }).eq('serial_tag', asset.serial);
-    // Supabase update for employee
     await db.from('employees').update({ assigned: emp.assigned }).eq('id', emp.id);
 
     const logDetails = 'Asset ' + asset.serial + ' assigned to ' + emp.name;
@@ -806,57 +779,45 @@ async function assignAsset(e) {
     alert("Asset successfully assigned!");
 }
 
-function updateTransferOldEmployee() {
-    const rawVal = document.getElementById('transfer-asset-search').value;
-    const serial = rawVal.includes(' - ') ? rawVal.split(' - ')[0].trim() : rawVal.trim();
-    const asset = assets.find(a => a.serial.toLowerCase() === serial.toLowerCase());
-    const emp = asset && asset.assignedTo ? employees.find(e => e.id === asset.assignedTo) : null;
-    document.getElementById('transfer-old-emp').value = emp ? emp.name + ' (ID: ' + emp.id + ')' : 'Not Assigned / Stock';
-}
-
+// --- TRANSFER ASSET CORE FUNCTION ---
 async function transferAsset(e) {
     if (e) e.preventDefault();
-    const assetDropdown = document.getElementById('select-assigned-asset-dropdown');
-    const selectedSerial = assetDropdown ? assetDropdown.value : '';
-    const newEmpInput = document.getElementById('transfer-new-emp-select');
-    const newEmpRaw = newEmpInput ? newEmpInput.value : '';
-    
-    let newEmpId = '';
-    if (newEmpRaw.includes('(') && newEmpRaw.includes(')')) {
-        const match = newEmpRaw.match(/\(([^)]+)\)/);
-        newEmpId = match ? match[1].replace('ID: ', '').trim() : newEmpRaw.trim();
-    } else {
-        newEmpId = newEmpRaw.trim();
+
+    const selectedSerial = document.getElementById('select-assigned-asset-dropdown')?.value || '';
+    const newEmpId = document.getElementById('selected-new-emp-id')?.value || '';
+    const reason = document.getElementById('transfer-reason')?.value.trim() || 'No reason provided';
+
+    if (!selectedSerial) {
+        showCenterAlert("Please select an asset to transfer!");
+        return;
     }
-    
-   const asset = assets.find(a => {
-        const aid = (a.serial || a.assetId || a.asset_id || a.id || '').toString().toLowerCase();
-        return aid === selectedSerial.toLowerCase() || selectedSerial.toLowerCase().includes(aid);
-    });
+    if (!newEmpId) {
+        showCenterAlert("Please select a valid New Employee from the dropdown list!");
+        return;
+    }
 
-    const newEmp = employees.find(em => {
-        const eid = (em.id || em.empId || '').toString().toLowerCase();
-        const ename = (em.name || em.employeeName || '').toString().toLowerCase();
-        return eid === newEmpId.toLowerCase() || newEmpRaw.toLowerCase().includes(eid) || newEmpRaw.toLowerCase().includes(ename);
-    });
-
-   console.log("DEBUG TRANSFER:", { selectedSerial, assetFound: asset, newEmpRaw, newEmpId, empFound: newEmp });
+    const asset = assets.find(a => (a.serial || a.assetId || a.asset_id || a.id) === selectedSerial);
+    const newEmp = employees.find(em => (em.id || em.empId) === newEmpId);
 
     if (!asset || !newEmp) {
-        alert("Invalid selection!");
+        showCenterAlert("Invalid selection! Please select employee and asset properly.");
         return;
-    } 
-   
-     
+    }
 
-    
-    const oldEmp = employees.find(em => em.id === asset.assignedTo);
-    const oldEmpName = oldEmp ? oldEmp.name + ' (' + oldEmp.id + ')' : 'Unassigned / Stock';
+    const oldEmp = employees.find(em => (em.id || em.empId) === asset.assignedTo);
+    if (oldEmp && (oldEmp.id || oldEmp.empId) === (newEmp.id || newEmp.empId)) {
+        showCenterAlert("Asset is already assigned to this employee!");
+        return;
+    }
+
+    const oldEmpName = oldEmp ? `${oldEmp.name} (${oldEmp.id})` : 'Unassigned / Stock';
 
     if (oldEmp) {
-        oldEmp.assigned = oldEmp.assigned.filter(s => s !== asset.serial);
+        oldEmp.assigned = (oldEmp.assigned || []).filter(s => s !== asset.serial);
         await db.from('employees').update({ assigned: oldEmp.assigned }).eq('id', oldEmp.id);
     }
+
+    if (!newEmp.assigned) newEmp.assigned = [];
     if (!newEmp.assigned.includes(asset.serial)) {
         newEmp.assigned.push(asset.serial);
         await db.from('employees').update({ assigned: newEmp.assigned }).eq('id', newEmp.id);
@@ -865,51 +826,28 @@ async function transferAsset(e) {
     asset.assignedTo = newEmp.id;
     await db.from('assets').update({ assigned_to: newEmp.id }).eq('serial_tag', asset.serial);
 
-    
-    const logDetails = 'Asset ' + asset.serial + ' transferred from ' + oldEmpName + ' to ' + newEmp.name + ' (' + newEmp.id + ')';
-    
-    const newLog = { timestamp: new Date().toLocaleString(), action: 'Asset Transferred', details: logDetails, user: sessionStorage.getItem('argos_logged_user') || 'Admin' };
+    const logDetails = `Asset ${asset.serial} transferred from ${oldEmpName} to ${newEmp.name} (${newEmp.id}) | Reason: ${reason}`;
+    const newLog = { 
+        timestamp: new Date().toLocaleString(), 
+        action: 'Asset Transferred', 
+        details: logDetails, 
+        user: sessionStorage.getItem('argos_logged_user') || 'Admin' 
+    };
     auditLogs.push(newLog);
     await db.from('audit_logs').insert([newLog]);
 
     saveData(); 
     refreshAllData(); 
-    alert("Asset successfully transferred!");
-}
 
-function updateReturnHolder() {
-    const rawVal = document.getElementById('return-asset-search').value;
-    const serial = rawVal.includes(' - ') ? rawVal.split(' - ')[0].trim() : rawVal.trim();
-    const asset = assets.find(a => a.serial.toLowerCase() === serial.toLowerCase());
-    const emp = asset && asset.assignedTo ? employees.find(e => e.id === asset.assignedTo) : null;
-    document.getElementById('return-holder-emp').value = emp ? emp.name + ' (ID: ' + emp.id + ')' : 'Not Assigned / Stock';
-}
+    document.getElementById('search-old-employee').value = '';
+    document.getElementById('selected-old-emp-id').value = '';
+    document.getElementById('transfer-old-emp').value = '';
+    document.getElementById('select-assigned-asset-dropdown').innerHTML = '<option value="">First select an old employee...</option>';
+    document.getElementById('transfer-new-emp-select').value = '';
+    document.getElementById('selected-new-emp-id').value = '';
+    document.getElementById('transfer-reason').value = '';
 
-async function returnAsset(e) {
-    if (e) e.preventDefault();
-    const rawVal = document.getElementById('return-asset-search').value;
-    const serial = rawVal.includes(' - ') ? rawVal.split(' - ')[0].trim() : rawVal.trim();
-    const asset = assets.find(a => a.serial.toLowerCase() === serial.toLowerCase());
-    if (!asset) { alert("Invalid asset!"); return; }
-    
-    const emp = employees.find(em => em.id === asset.assignedTo);
-    if (emp) {
-        emp.assigned = emp.assigned.filter(s => s !== asset.serial);
-        await db.from('employees').update({ assigned: emp.assigned }).eq('id', emp.id);
-    }
-
-    asset.status = 'In Stock'; 
-    asset.assignedTo = '';
-    await db.from('assets').update({ status: 'In Stock', assigned_to: null }).eq('serial_tag', asset.serial);
-
-    const logDetails = 'Asset ' + serial + ' returned to stock';
-    const newLog = { timestamp: new Date().toLocaleString(), action: 'Asset Returned', details: logDetails, user: sessionStorage.getItem('argos_logged_user') || 'Admin' };
-    auditLogs.push(newLog);
-    await db.from('audit_logs').insert([newLog]);
-
-    saveData(); 
-    refreshAllData(); 
-    alert("Asset returned to stock!");
+    showCenterAlert("Asset successfully transferred!");
 }
 
 function populateStockDatalist() {
@@ -934,18 +872,6 @@ function populateEmployeeDatalist() {
     });
 }
 
-function populateTransferEmployeeDatalist() {
-    const list = document.getElementById('transfer-employees-datalist');
-    if (!list) return;
-    list.innerHTML = '';
-    employees.forEach(emp => {
-        let opt = document.createElement('option');
-        opt.value = emp.name + ' (ID: ' + emp.id + ') - ' + emp.dept;
-        list.appendChild(opt);
-    });
-}
-
-// 1. Asset select karne ka popup (Stock assets ke liye)
 function openSelectAssetPopup() {
     const listDiv = document.getElementById('popup-asset-list');
     if (!listDiv) return;
@@ -974,13 +900,12 @@ function closeSelectAssetPopup() {
     document.getElementById('selectAssetModal').style.display = 'none';
 }
 
-// 2. Employee select karne ka popup (Assign aur Transfer dono ke liye)
 function openSelectEmployeePopup() {
     const listDiv = document.getElementById('popup-employee-list');
     if (!listDiv) return;
     listDiv.innerHTML = '';
     
-    if (typeof employees !== 'undefined' && employees.length > 0) {
+    if (employees.length > 0) {
         employees.forEach(emp => {
             let item = document.createElement('div');
             item.style.cssText = "padding: 10px 14px; background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 6px; cursor: pointer; margin-bottom: 6px; font-size: 14px;";
@@ -995,10 +920,7 @@ function openSelectEmployeePopup() {
                     transferInput.value = selectedText;
                 } else if (assignInput) {
                     assignInput.value = selectedText;
-                } else {
-                    if (transferInput) transferInput.value = selectedText;
                 }
-                
                 closeSelectEmployeePopup();
             };
             listDiv.appendChild(item);
@@ -1014,111 +936,6 @@ function openSelectEmployeePopup() {
 function closeSelectEmployeePopup() {
     const modal = document.getElementById('selectEmployeeModal');
     if (modal) modal.style.display = 'none';
-}
-
-// 3. Assigned asset select karne ka popup (Transfer aur Return ke liye)
-function openSelectAssignedAssetPopup(type) {
-    const listDiv = document.getElementById('popup-assigned-asset-list');
-    if (!listDiv) return;
-    listDiv.innerHTML = '';
-    
-    assets.filter(a => a.status === 'Assigned').forEach(a => {
-        let item = document.createElement('div');
-        item.style.cssText = "padding: 8px 12px; background: #F8FAFC; border: 1px solid var(--border-color); border-radius: 6px; cursor: pointer; margin-bottom: 5px;";
-        const emp = employees.find(e => e.id === a.assignedTo);
-        const empName = emp ? emp.name : 'Unknown';
-        item.innerHTML = '<strong>' + a.serial + '</strong> (' + a.category + ') - Assigned to: <span style="color: var(--text-muted);">' + empName + '</span>';
-        
-        item.onclick = function() {
-            if (type === 'transfer') {
-                document.getElementById('transfer-asset-search').value = a.serial + ' - ' + a.category;
-                if (typeof updateTransferOldEmployee === 'function') {
-                    // Old employee auto-detect trigger karne ke liye
-                    document.getElementById('transfer-asset-search').dataset.assignedTo = a.assignedTo;
-                    updateTransferOldEmployee();
-                }
-            } else {
-                document.getElementById('return-asset-search').value = a.serial + ' - ' + a.category;
-            }
-            closeSelectAssignedAssetPopup();
-        };
-        listDiv.appendChild(item);
-    });
-    document.getElementById('selectAssignedAssetModal').style.display = 'flex';
-}
-
-function closeSelectAssignedAssetPopup() {
-    document.getElementById('selectAssignedAssetModal').style.display = 'none';
-}
-
-// Supabase se requests fetch karke array me dalne ke liye
-async function fetchRequestsFromSupabase() {
-    try {
-        const { data, error } = await db.from('asset_requests').select('*');
-        if (!error && data) {
-            assetRequests = data.map(r => ({
-                id: r.id,
-                date: r.date || new Date(r.created_at).toLocaleDateString(),
-                empId: r.emp_id || r.empId,
-                empName: r.emp_name || r.empName,
-                details: r.details,
-                status: r.status || 'Pending'
-            }));
-            renderRequestsTable();
-        }
-    } catch (err) {
-        console.error("Error fetching asset requests:", err);
-    }
-}
-
-async function submitAssetRequest(e) {
-    if (e) e.preventDefault();
-    
-    const id = document.getElementById('req-emp-id').value.trim();
-    const name = document.getElementById('req-emp-name').value.trim();
-    const details = document.getElementById('req-details').value.trim();
-
-    if (!id || !name || !details) {
-        alert("Please fill in all required fields.");
-        return;
-    }
-
-    const newReq = { 
-        date: new Date().toLocaleDateString(), 
-        emp_id: id, 
-        emp_name: name, 
-        details: details, 
-        status: 'Pending' 
-    };
-
-    // 1. Supabase mein data insert karein
-    const { error } = await db.from('asset_requests').insert([newReq]);
-    
-    if (error) {
-        alert("Error submitting request: " + error.message);
-        return;
-    }
-
-    // 2. Modal close karein
-    closeRequestModal(); 
-
-    // 3. Supabase se fresh data fetch karein
-    if (typeof fetchAssetRequests === 'function') {
-        await fetchAssetRequests(); 
-    }
-
-    // 4. UI badge aur breakdown/requests table ko turant update/render karein
-    if (typeof renderRequestsBadge === 'function') {
-        renderRequestsBadge();
-    }
-    if (typeof renderBreakdownTable === 'function') {
-        renderBreakdownTable();
-    }
-    if (typeof refreshAllData === 'function') {
-        refreshAllData();
-    }
-
-    alert("Request submitted successfully!");
 }
 
 function renderRequestsTable() {
@@ -1140,17 +957,52 @@ function renderRequestsTable() {
 }
 
 async function fulfillRequest(index) {
-    // Reverse array ka index handle karne ke liye
+    // Reverse array ka index handle karne ke liye sahi index nikalna
     const actualIdx = assetRequests.length - 1 - index;
-    assetRequests.actualIdx.status = 'Fulfilled';
+    const req = assetRequests[actualIdx];
+
+    if (!req) return;
+
+    // 1. Status ko Fulfilled update karna
+    req.status = 'Fulfilled';
     
-    // Supabase me status update karein agar id hai toh
-    // (Agar id available hai toh database me bhi update ho jayega)
-    
+    if (req.id && typeof db !== 'undefined') {
+        await db.from('asset_requests').update({ status: 'Fulfilled' }).eq('id', req.id);
+    }
+
     saveData(); 
     refreshAllData(); 
-    switchTab('assign'); 
-    alert("Request fulfilled.");
+    
+    if (typeof renderRequestsBadge === 'function') {
+        renderRequestsBadge();
+    }
+
+    // 2. Assign tab par switch karna
+    switchTab('assign');
+
+    // 3. Employee aur Reason ko automatically pre-fill karna
+    setTimeout(() => {
+        const empInput = document.getElementById('modal-assign-emp-search');
+        const reasonInput = document.getElementById('modal-assign-reason');
+
+        // Employee name aur ID format match karna (jaise: Name (ID: EMP-001) ya empName + ID)
+        if (empInput && req.empName) {
+            const matchedEmp = employees.find(e => e.id === req.empId || e.name.toLowerCase() === req.empName.toLowerCase());
+            if (matchedEmp) {
+                empInput.value = matchedEmp.name + ' (ID: ' + matchedEmp.id + ') - ' + matchedEmp.dept;
+            } else {
+                empInput.value = req.empName + (req.empId ? ' (ID: ' + req.empId + ')' : '');
+            }
+        }
+
+        // Reason mein details ya item approval ka message set karna (jaise "Mouse Approved" ya details)
+        if (reasonInput) {
+            let detailsText = req.details ? req.details.toUpperCase() : 'APPROVED';
+            reasonInput.value = detailsText + ' - APPROVED';
+        }
+    }, 100);
+
+    alert("Request approved! Employee and reason populated in Assign form.");
 }
 
 // --- PART 6: Services, Reports, Settings & Backup ---
@@ -1209,20 +1061,13 @@ function renderAccessEmailsList() {
 }
 
 function removeAccessEmail(emailToRemove) {
-    if (!confirm('Are you sure you want to remove ${emailToRemove} from the list?')) {
+    if (!confirm(`Are you sure you want to remove ${emailToRemove} from the list?`)) {
         return;
     }
-
-    // Global accessEmails array se filter karke hatana
     accessEmails = accessEmails.filter(e => e !== emailToRemove);
-    
-    // LocalStorage ko update karna
     localStorage.setItem('argos_access_emails', JSON.stringify(accessEmails));
-    
-    // List ko dobara render karna taaki screen se hat jaye
     renderAccessEmailsList();
-    
-    alert('${emailToRemove} successfully removed!');
+    alert(`${emailToRemove} successfully removed!`);
 }
 
 function downloadCompleteBackup() {
@@ -1362,13 +1207,11 @@ async function addAssetFromModal(e) {
         user: sessionStorage.getItem('argos_logged_user') || 'Admin'
     };
 
-    const { error: logError } = await db.from('audit_logs').insert([newLog]);
-    if (!logError) {
-        auditLogs.push(newLog);
-    }
+    await db.from('audit_logs').insert([newLog]);
+    auditLogs.push(newLog);
 
     closeAssetModal(); 
-    if (typeof refreshAllData === 'function') refreshAllData();
+    refreshAllData();
     alert("Asset added successfully!");
 }
 
@@ -1413,13 +1256,11 @@ async function addEmployeeFromModal(e) {
         user: sessionStorage.getItem('argos_logged_user') || 'Admin'
     };
 
-    const { error: logError } = await db.from('audit_logs').insert([newLog]);
-    if (!logError) {
-        auditLogs.push(newLog);
-    }
+    await db.from('audit_logs').insert([newLog]);
+    auditLogs.push(newLog);
 
     closeEmployeeModal(); 
-    if (typeof refreshAllData === 'function') refreshAllData();
+    refreshAllData();
     alert("Employee added successfully!");
 }
 
@@ -1713,8 +1554,6 @@ function renderMaintenanceTimeline() {
     listEl.innerHTML = html;
 }
 
-
-
 // --- CONSUMABLES & ACCESSORIES STOCK MANAGEMENT ---
 let consumablesStock = JSON.parse(localStorage.getItem('argos_consumables')) || [];
 
@@ -1808,7 +1647,6 @@ function renderConsumablesTable() {
     tbody.innerHTML = html;
 }
 
-// Asset History Modal open karne ka function
 function openAssetHistory(serial) {
     const modal = document.getElementById('assetHistoryModal');
     const title = document.getElementById('history-modal-title');
@@ -1843,7 +1681,6 @@ function openAssetHistory(serial) {
         html += '</table>';
         content.innerHTML = html;
     }
-    
     modal.style.display = 'flex';
 }
 
@@ -1852,396 +1689,8 @@ function closeAssetHistoryModal() {
     if (modal) modal.style.display = 'none';
 }
 
-window.onload = async function () {
-    // Supabase se actual active session check karein
-    const { data: { session } } = await db.auth.getSession();
-    
-    if (session) {
-        // Agar Supabase mein active session hai
-        const userEmail = session.user.email;
-        sessionStorage.setItem('argos_logged_user', userEmail);
-        
-        // 1. Dashboard UI show karein
-        showDashboardApp();
-        
-        // 2. Supabase se saara fresh data fetch karein
-        if (typeof fetchAssetRequests === 'function') {
-            await fetchAssetRequests();
-        }
-        
-        // 3. Asset requests table ko UI par draw karein
-        if (typeof renderRequestsTable === 'function') {
-            renderRequestsTable();
-        } else if (typeof refreshAllData === 'function') {
-            refreshAllData();
-        }
-    } else {
-        // Agar session nahi hai toh login screen dikhayein
-        sessionStorage.removeItem('argos_logged_user');
-        if (typeof showLoginScreen === 'function') {
-            showLoginScreen();
-        }
-    }
-};
-
-// 1. Supabase Client Init 
-// const { createClient } = supabase;
-// const db = createClient('YOUR_SUPABASE_URL', 'YOUR_SUPABASE_ANON_KEY');
-
-// 2. Login Function
-async function loginUser(email, password) {
-    const { data, error } = await db.auth.signInWithPassword({
-        email: email,
-        password: password
-    });
-
-    if (error) {
-        alert("Login Failed: " + error.message);
-        return false;
-    }
-
-    alert("Login Successful!");
-    sessionStorage.setItem('argos_logged_user', data.user.email);
-    return true;
-}
-
-// 3. Logout Function
-async function logoutUser() {
-    const { error } = await db.auth.signOut();
-    if (error) {
-        alert("Error logging out: " + error.message);
-        return;
-    }
-    sessionStorage.removeItem('argos_logged_user');
-    window.location.reload();
-}
-
-// 4. Session Verification on Page Load
-async function checkAuthSession() {
-    const { data: { session } } = await db.auth.getSession();
-    if (!session) {
-        // Logged out state logic
-        console.log("No active user session");
-    } else {
-        console.log("Logged in user:", session.user.email);
-    }
-}
-
-// Settings se email delete karne ka function
-function removeAccessEmail(emailToRemove) {
-    if (!confirm('Are you sure you want to remove ${emailToRemove} from the list?')) {
-        return;
-    }
-
-    // Global accessEmails array se filter karke hatana
-    accessEmails = accessEmails.filter(e => e !== emailToRemove);
-    
-    // LocalStorage ko update karna
-    localStorage.setItem('argos_access_emails', JSON.stringify(accessEmails));
-    
-    // List ko dobara render karna taaki screen se hat jaye
-    renderAccessEmailsList();
-    
-    alert('${emailToRemove} successfully removed!');
-
-}
-
-function filterAssetsByEmployee(query) {
-    const q = query.toLowerCase().trim();
-    if (!q) return;
-
-    // Filter assets matching assigned employee
-    const matchedAssets = assets.assetData ? assets.assetData.filter(ast => 
-        ast.assignedTo && (
-            ast.assignedTo.toLowerCase().includes(q) || 
-            (ast.empId && ast.empId.toLowerCase().includes(q))
-        )
-    ) : assets.filter(ast => 
-        ast.assignedTo && (
-            ast.assignedTo.toLowerCase().includes(q) || 
-            (ast.empId && ast.empId.toLowerCase().includes(q))
-        )
-    );
-
-    const assetSelect = document.getElementById('select-assigned-asset-dropdown');
-
-if (matchedAssets.length > 0 && assetSelect) {
-    assetSelect.innerHTML = '<option value="">Select asset to transfer...</option>';
-    matchedAssets.forEach((ast, index) => {
-        const option = document.createElement('option');
-        
-        // Exact keys jo inventory table mein use ho rahi hain
-        const aid = ast.assetId || ast.asset_id || ast.id || ast.serial_no || ast.serialNo || ast.tag || `ARG-00${index + 1}`;
-        const category = ast.category || ast.asset_category || ast.type || 'Asset';
-        const aname = ast.assetName || ast.name || ast.asset_name || ast.title || ast.model || '';
-        
-        option.value = aid;
-        
-        // Exact format: ARG-MON-001 - Monitor (Zebronics)
-        if (aname && aname !== category) {
-            option.textContent = `${aid} - ${category} (${aname})`;
-        } else {
-            option.textContent = `${aid} - ${category}`;
-        }
-        
-        assetSelect.appendChild(option);
-    });
-}
-}
-
-
-function populateOldEmployeeDropdown(query = '') {
-    const datalist = document.getElementById('old-employees-datalist');
-    if (!datalist) return;
-    
-    const empList = employees || []; 
-    const q = query.toLowerCase().trim();
-    
-    // Agar query hai toh filter karo, warna saare dikhao
-    const filtered = q === '' ? empList : empList.filter(emp => {
-        const name = (emp.name || emp.employeeName || emp.fullName || '').toLowerCase();
-        const id = (emp.empId || emp.id || '').toLowerCase();
-        return name.includes(q) || id.includes(q);
-    });
-    
-    datalist.innerHTML = '';
-    filtered.forEach(emp => {
-        const option = document.createElement('option');
-        const empName = emp.name || emp.employeeName || emp.fullName;
-        const empId = emp.empId || emp.id || '';
-        
-        option.value = `${empName} (${empId})`;
-        datalist.appendChild(option);
-    });
-}
-
-function fillOldEmployeeFromAsset(selectedAssetId) {
-    const oldEmpInput = document.getElementById('transfer-old-emp');
-    if (!oldEmpInput) return;
-    
-    if (!selectedAssetId) {
-        oldEmpInput.value = '';
-        return;
-    }
-    
-    // matchedAssets ya global assets array se asset find karo
-    const allAssets = (typeof assets !== 'undefined' ? assets.assetData || assets : []);
-    const foundAsset = allAssets.find(ast => {
-        const aid = ast.assetId || ast.asset_id || ast.id || ast.serial_no || ast.serialNo || ast.tag;
-        return aid === selectedAssetId;
-    });
-    
-    if (foundAsset) {
-        // Employee ki field check karein jo asset ko assigned hai
-        const holder = foundAsset.assignedTo || foundAsset.employeeName || foundAsset.holder || 'N/A';
-        oldEmpInput.value = holder;
-    } else {
-        // Agar upar wale se na mile toh jo old employee search mein dala tha wahi utha lo
-        const searchEmp = document.getElementById('search-old-employee');
-        oldEmpInput.value = searchEmp ? searchEmp.value : '';
-    }
-}
-
-// Datalist mein employees populate karne ke liye function
-function populateEmployeeDatalists() {
-    const empList = (typeof employees !== 'undefined' ? employees : []);
-    
-    // 1. Old Employee Datalist
-    const oldDatalist = document.getElementById('old-employees-datalist');
-    if (oldDatalist) {
-        oldDatalist.innerHTML = '';
-        empList.forEach(emp => {
-            const option = document.createElement('option');
-            const empName = emp.name || emp.employeeName || emp.fullName || '';
-            const empId = emp.empId || emp.id || '';
-            option.value = `${empName} (${empId})`;
-            oldDatalist.appendChild(option);
-        });
-    }
-    
-    // 2. New Employee Datalist
-    const newDatalist = document.getElementById('new-employees-datalist');
-    if (newDatalist) {
-        newDatalist.innerHTML = '';
-        empList.forEach(emp => {
-            const option = document.createElement('option');
-            const empName = emp.name || emp.employeeName || emp.fullName || '';
-            const empId = emp.empId || emp.id || '';
-            const empDept = emp.department || emp.dept || '';
-            option.value = `${empName} (${empId})${empDept ? ' - ' + empDept : ''}`;
-            newDatalist.appendChild(option);
-        });
-    }
-}
-
-// Page load hone par datalist ko populate karne ke liye
-document.addEventListener('DOMContentLoaded', () => {
-    populateEmployeeDatalists();
-});
-
-// 1. Employees ko dropdowns mein populate karne ke liye
-function populateEmployeeDropdowns() {
-    const empList = (typeof employees !== 'undefined' ? employees : []);
-    
-    const oldEmpSelect = document.getElementById('search-old-employee');
-    const newEmpSelect = document.getElementById('transfer-new-emp-select');
-    
-    if (oldEmpSelect) {
-        oldEmpSelect.innerHTML = '<option value="">Select old employee...</option>';
-        empList.forEach(emp => {
-            const opt = document.createElement('option');
-            const name = emp.name || emp.employeeName || '';
-            const id = emp.id || emp.empId || '';
-            opt.value = id; // ID store hogi backend ke liye
-            opt.textContent = `${name} (${id})`;
-            oldEmpSelect.appendChild(opt);
-        });
-    }
-    
-    if (newEmpSelect) {
-        newEmpSelect.innerHTML = '<option value="">Select new employee...</option>';
-        empList.forEach(emp => {
-            const opt = document.createElement('option');
-            const name = emp.name || emp.employeeName || '';
-            const id = emp.id || emp.empId || '';
-            const dept = emp.department || emp.dept || '';
-            opt.value = id;
-            opt.textContent = `${name} (${id})${dept ? ' - ' + dept : ''}`;
-            newEmpSelect.appendChild(opt);
-        });
-    }
-}
-
-// 2. Old Employee select hote hi uske assigned assets load karna
-function filterAssetsForOldEmployee(empId) {
-    const assetDropdown = document.getElementById('select-assigned-asset-dropdown');
-    const oldEmpInput = document.getElementById('transfer-old-emp');
-    
-    if (!assetDropdown) return;
-    assetDropdown.innerHTML = '<option value="">Select asset to transfer...</option>';
-    
-    if (!empId) {
-        if (oldEmpInput) oldEmpInput.value = '';
-        return;
-    }
-    
-    // Employee ka naam dhoondo
-    const emp = employees.find(e => (e.id || e.empId) === empId);
-    if (oldEmpInput && emp) {
-        oldEmpInput.value = `${emp.name || emp.employeeName} (${emp.id || emp.empId})`;
-    }
-    
-    // Us employee ko assigned assets filter karo
-    // emp.assigned array ho sakta hai ya assets list mein assignedTo match hoga
-    const empAssignedSerials = emp && emp.assigned ? emp.assigned : [];
-    
-    const assignedAssets = assets.filter(a => {
-        const aid = a.assignedTo || a.employeeId || a.empId;
-        const serial = a.serial || a.assetId || a.asset_id || a.id;
-        return aid === empId || empAssignedSerials.includes(serial);
-    });
-    
-    assignedAssets.forEach(ast => {
-        const opt = document.createElement('option');
-        const serial = ast.serial || ast.assetId || ast.asset_id || ast.id;
-        const category = ast.category || ast.type || 'Asset';
-        const model = ast.model || ast.name || '';
-        
-        opt.value = serial;
-        opt.textContent = `${serial} - ${category} (${model})`;
-        assetDropdown.appendChild(opt);
-    });
-}
-
-// Page load par call karein
-document.addEventListener('DOMContentLoaded', () => {
-    populateEmployeeDropdowns();
-});
-
-// Datalist populate karne ke liye
-function populateEmployeeDatalists() {
-    const empList = (typeof employees !== 'undefined' ? employees : []);
-    
-    const oldDatalist = document.getElementById('old-employees-datalist');
-    const newDatalist = document.getElementById('new-employees-datalist');
-    
-    if (oldDatalist) {
-        oldDatalist.innerHTML = '';
-        empList.forEach(emp => {
-            const opt = document.createElement('option');
-            const name = emp.name || emp.employeeName || '';
-            const id = emp.id || emp.empId || '';
-            opt.value = `${name} (${id})`;
-            oldDatalist.appendChild(opt);
-        });
-    }
-    
-    if (newDatalist) {
-        newDatalist.innerHTML = '';
-        empList.forEach(emp => {
-            const opt = document.createElement('option');
-            const name = emp.name || emp.employeeName || '';
-            const id = emp.id || emp.empId || '';
-            const dept = emp.department || emp.dept || '';
-            opt.value = `${name} (${id})${dept ? ' - ' + dept : ''}`;
-            newDatalist.appendChild(opt);
-        });
-    }
-}
-
-// Old Employee type/select hone par assets filter karna
-function checkOldEmployeeSelection() {
-    const val = document.getElementById('search-old-employee').value;
-    const assetDropdown = document.getElementById('select-assigned-asset-dropdown');
-    const oldEmpInput = document.getElementById('transfer-old-emp');
-    
-    if (!assetDropdown) return;
-    assetDropdown.innerHTML = '<option value="">Select asset to transfer...</option>';
-    
-    // ID ya Name extract karo
-    let empId = '';
-    if (val.includes('(') && val.includes(')')) {
-        const match = val.match(/\(([^)]+)\)/);
-        empId = match ? match[1].replace('ID: ', '').trim() : '';
-    }
-    
-    const emp = employees.find(e => (e.id || e.empId) === empId || `${e.name} (${e.id || e.empId})` === val);
-    
-    if (!emp) {
-        if (oldEmpInput) oldEmpInput.value = '';
-        return;
-    }
-    
-    if (oldEmpInput) {
-        oldEmpInput.value = `${emp.name || emp.employeeName} (${emp.id || emp.empId})`;
-    }
-    
-    // Us employee ke assigned assets nikalo
-    const empAssignedSerials = emp.assigned || [];
-    const assignedAssets = assets.filter(a => {
-        const aid = a.assignedTo || a.employeeId || a.empId;
-        const serial = a.serial || a.assetId || a.asset_id || a.id;
-        return aid === emp.id || aid === emp.empId || empAssignedSerials.includes(serial);
-    });
-    
-    assignedAssets.forEach(ast => {
-        const opt = document.createElement('option');
-        const serial = ast.serial || ast.assetId || ast.asset_id || ast.id;
-        const category = ast.category || ast.type || 'Asset';
-        const model = ast.model || ast.name || '';
-        opt.value = serial;
-        opt.textContent = `${serial} - ${category} (${model})`;
-        assetDropdown.appendChild(opt);
-    });
-}
-
-document.addEventListener('DOMContentLoaded', () => {
-    populateEmployeeDatalists();
-});
-
 // --- CENTRALIZED & CENTERED NOTIFICATION/ALERT HELPER ---
 function showCenterAlert(message) {
-    // Purana alert hatao agar ho
     const existing = document.getElementById('custom-center-alert');
     if (existing) existing.remove();
 
@@ -2273,21 +1722,10 @@ function filterEmpDropdown(type) {
     if (!input || !listDiv) return;
 
     const query = input.value.toLowerCase().trim();
-    const empList = (typeof employees !== 'undefined' ? employees : []);
-
-    // Jo naam query se match kare ya shuru ho, use upar rakho
-    const filtered = empList.filter(emp => {
-        const name = (emp.name || emp.employeeName || '').toLowerCase();
-        const id = (emp.id || emp.empId || '').toLowerCase();
+    const filtered = employees.filter(emp => {
+        const name = (emp.name || '').toLowerCase();
+        const id = (emp.id || '').toLowerCase();
         return name.includes(query) || id.includes(query);
-    }).sort((a, b) => {
-        const nameA = (a.name || a.employeeName || '').toLowerCase();
-        const nameB = (b.name || b.employeeName || '').toLowerCase();
-        const aStarts = nameA.startsWith(query);
-        const bStarts = nameB.startsWith(query);
-        if (aStarts && !bStarts) return -1;
-        if (!aStarts && bStarts) return 1;
-        return nameA.localeCompare(nameB);
     });
 
     listDiv.innerHTML = '';
@@ -2295,9 +1733,9 @@ function filterEmpDropdown(type) {
         listDiv.innerHTML = '<div style="padding: 10px 14px; color: #64748b; font-size: 13px;">No employee found</div>';
     } else {
         filtered.forEach(emp => {
-            const name = emp.name || emp.employeeName || '';
-            const id = emp.id || emp.empId || '';
-            const dept = emp.department || emp.dept || '';
+            const name = emp.name || '';
+            const id = emp.id || '';
+            const dept = emp.dept || '';
             
             const item = document.createElement('div');
             item.style.cssText = 'padding: 10px 14px; cursor: pointer; font-size: 13.5px; border-bottom: 1px solid #f1f5f9; transition: background 0.15s;';
@@ -2333,12 +1771,12 @@ function loadAssetsForSelectedOldEmployee(empId) {
     const assetDropdown = document.getElementById('select-assigned-asset-dropdown');
     if (!assetDropdown) return;
 
-    const emp = employees.find(e => (e.id || e.empId) === empId);
+    const emp = employees.find(e => e.id === empId);
     const empAssignedSerials = (emp && Array.isArray(emp.assigned)) ? emp.assigned : [];
 
     const assignedAssets = assets.filter(a => {
-        const assignedTo = a.assignedTo || a.employeeId || a.empId;
-        const serial = a.serial || a.assetId || a.asset_id || a.id;
+        const assignedTo = a.assignedTo;
+        const serial = a.serial;
         return assignedTo === empId || empAssignedSerials.includes(serial);
     });
 
@@ -2350,9 +1788,9 @@ function loadAssetsForSelectedOldEmployee(empId) {
 
     assetDropdown.innerHTML = '<option value="">-- Select asset to transfer --</option>';
     assignedAssets.forEach(ast => {
-        const serial = ast.serial || ast.assetId || ast.asset_id || ast.id;
-        const category = ast.category || ast.type || 'Asset';
-        const model = ast.model || ast.name || '';
+        const serial = ast.serial;
+        const category = ast.category || 'Asset';
+        const model = ast.model || '';
         
         const opt = document.createElement('option');
         opt.value = serial;
@@ -2361,7 +1799,6 @@ function loadAssetsForSelectedOldEmployee(empId) {
     });
 }
 
-// Bahar click karne par dropdown band ho jaye
 document.addEventListener('click', function(e) {
     if (!e.target.closest('#search-old-employee') && !e.target.closest('#old-emp-custom-list')) {
         const oldList = document.getElementById('old-emp-custom-list');
@@ -2372,110 +1809,6 @@ document.addEventListener('click', function(e) {
         if (newList) newList.style.display = 'none';
     }
 });
-
-// --- TRANSFER ASSET CORE FUNCTION ---
-async function transferAsset(e) {
-    if (e) e.preventDefault();
-
-    const selectedSerial = document.getElementById('select-assigned-asset-dropdown')?.value || '';
-    const newEmpId = document.getElementById('selected-new-emp-id')?.value || '';
-    const reason = document.getElementById('transfer-reason')?.value.trim() || 'No reason provided';
-
-    if (!selectedSerial) {
-        showCenterAlert("Please select an asset to transfer!");
-        return;
-    }
-    if (!newEmpId) {
-        showCenterAlert("Please select a valid New Employee from the dropdown list!");
-        return;
-    }
-
-    const asset = assets.find(a => (a.serial || a.assetId || a.asset_id || a.id) === selectedSerial);
-    const newEmp = employees.find(em => (em.id || em.empId) === newEmpId);
-
-    if (!asset || !newEmp) {
-        showCenterAlert("Invalid selection! Please select employee and asset properly.");
-        return;
-    }
-
-    const oldEmp = employees.find(em => (em.id || em.empId) === asset.assignedTo);
-    if (oldEmp && (oldEmp.id || oldEmp.empId) === (newEmp.id || newEmp.empId)) {
-        showCenterAlert("Asset is already assigned to this employee!");
-        return;
-    }
-
-    const oldEmpName = oldEmp ? `${oldEmp.name} (${oldEmp.id})` : 'Unassigned / Stock';
-
-    // 1. Old Employee se asset hatao
-    if (oldEmp) {
-        oldEmp.assigned = (oldEmp.assigned || []).filter(s => s !== asset.serial);
-        if (typeof db !== 'undefined') {
-            await db.from('employees').update({ assigned: oldEmp.assigned }).eq('id', oldEmp.id);
-        }
-    }
-
-    // 2. New Employee mein asset add karo
-    if (!newEmp.assigned) newEmp.assigned = [];
-    if (!newEmp.assigned.includes(asset.serial)) {
-        newEmp.assigned.push(asset.serial);
-        if (typeof db !== 'undefined') {
-            await db.from('employees').update({ assigned: newEmp.assigned }).eq('id', newEmp.id);
-        }
-    }
-
-    // 3. Asset holder update karo
-    asset.assignedTo = newEmp.id;
-    if (typeof db !== 'undefined') {
-        await db.from('assets').update({ assigned_to: newEmp.id }).eq('serial_tag', asset.serial);
-    }
-
-    // 4. Audit Log entry
-    const logDetails = `Asset ${asset.serial} transferred from ${oldEmpName} to ${newEmp.name} (${newEmp.id}) | Reason: ${reason}`;
-    const newLog = { 
-        timestamp: new Date().toLocaleString(), 
-        action: 'Asset Transferred', 
-        details: logDetails, 
-        user: typeof currentUser !== 'undefined' ? currentUser : 'Admin' 
-    };
-    if (typeof auditLogs !== 'undefined') auditLogs.push(newLog);
-    if (typeof db !== 'undefined') {
-        await db.from('audit_logs').insert([newLog]);
-    }
-
-    if (typeof saveData === 'function') saveData();
-    if (typeof refreshAllData === 'function') refreshAllData();
-
-    // Form clear karo
-    document.getElementById('search-old-employee').value = '';
-    document.getElementById('selected-old-emp-id').value = '';
-    document.getElementById('transfer-old-emp').value = '';
-    document.getElementById('select-assigned-asset-dropdown').innerHTML = '<option value="">First select an old employee...</option>';
-    document.getElementById('transfer-new-emp-select').value = '';
-    document.getElementById('selected-new-emp-id').value = '';
-    document.getElementById('transfer-reason').value = '';
-
-    showCenterAlert("Asset successfully transferred!");
-}
-
-// Global alert override taaki saare alerts center mein aayein
-window.alert = function(message) {
-    const existing = document.getElementById('custom-center-alert');
-    if (existing) existing.remove();
-
-    const alertBox = document.createElement('div');
-    alertBox.id = 'custom-center-alert';
-    alertBox.style.cssText = `
-        position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
-        background: #ffffff; padding: 24px 32px; border-radius: 12px;
-        box-shadow: 0 10px 30px rgba(0,0,0,0.25); z-index: 99999;
-        text-align: center; border: 1px solid #e2e8f0; min-width: 300px;
-    `;
-    alertBox.innerHTML = `
-        <p style="font-size: 15px; font-weight: 600; color: #1e293b; margin-bottom: 16px;">${message}</p>
-        <button onclick="document.getElementById('custom-center-alert').remove()" style="background: #2563eb; color: #fff; border: none; padding: 8px 20px; border-radius: 6px; cursor: pointer; font-weight: 600;">OK</button>
-    `;
-    document.body.appendChild(alertBox);
-};
 
 // --- RETURN ASSET SEARCHABLE DROPDOWN & BULK RETURN LOGIC ---
 
@@ -2489,20 +1822,10 @@ function filterReturnEmpDropdown() {
     if (!input || !listDiv) return;
 
     const query = input.value.toLowerCase().trim();
-    const empList = (typeof employees !== 'undefined' ? employees : []);
-
-    const filtered = empList.filter(emp => {
-        const name = (emp.name || emp.employeeName || '').toLowerCase();
-        const id = (emp.id || emp.empId || '').toLowerCase();
+    const filtered = employees.filter(emp => {
+        const name = (emp.name || '').toLowerCase();
+        const id = (emp.id || '').toLowerCase();
         return name.includes(query) || id.includes(query);
-    }).sort((a, b) => {
-        const nameA = (a.name || a.employeeName || '').toLowerCase();
-        const nameB = (b.name || b.employeeName || '').toLowerCase();
-        const aStarts = nameA.startsWith(query);
-        const bStarts = nameB.startsWith(query);
-        if (aStarts && !bStarts) return -1;
-        if (!aStarts && bStarts) return 1;
-        return nameA.localeCompare(nameB);
     });
 
     listDiv.innerHTML = '';
@@ -2510,9 +1833,9 @@ function filterReturnEmpDropdown() {
         listDiv.innerHTML = '<div style="padding: 10px 14px; color: #64748b; font-size: 13px;">No employee found</div>';
     } else {
         filtered.forEach(emp => {
-            const name = emp.name || emp.employeeName || '';
-            const id = emp.id || emp.empId || '';
-            const dept = emp.department || emp.dept || '';
+            const name = emp.name || '';
+            const id = emp.id || '';
+            const dept = emp.dept || '';
             
             const item = document.createElement('div');
             item.style.cssText = 'padding: 10px 14px; cursor: pointer; font-size: 13.5px; border-bottom: 1px solid #f1f5f9; transition: background 0.15s;';
@@ -2546,12 +1869,12 @@ function loadAssetsForReturnEmployee(empId) {
     const assetDropdown = document.getElementById('return-asset-dropdown');
     if (!assetDropdown) return;
 
-    const emp = employees.find(e => (e.id || e.empId) === empId);
+    const emp = employees.find(e => e.id === empId);
     const empAssignedSerials = (emp && Array.isArray(emp.assigned)) ? emp.assigned : [];
 
     const assignedAssets = assets.filter(a => {
-        const assignedTo = a.assignedTo || a.employeeId || a.empId;
-        const serial = a.serial || a.assetId || a.asset_id || a.id;
+        const assignedTo = a.assignedTo;
+        const serial = a.serial;
         return assignedTo === empId || empAssignedSerials.includes(serial);
     });
 
@@ -2563,7 +1886,6 @@ function loadAssetsForReturnEmployee(empId) {
 
     assetDropdown.innerHTML = '<option value="">-- Select asset to return --</option>';
     
-    // * RETURN ALL ASSETS OPTION *
     const allOpt = document.createElement('option');
     allOpt.value = 'RETURN_ALL';
     allOpt.textContent = `🚀 Return All Assets (${assignedAssets.length} Assets)`;
@@ -2572,9 +1894,9 @@ function loadAssetsForReturnEmployee(empId) {
     assetDropdown.appendChild(allOpt);
 
     assignedAssets.forEach(ast => {
-        const serial = ast.serial || ast.assetId || ast.asset_id || ast.id;
-        const category = ast.category || ast.type || 'Asset';
-        const model = ast.model || ast.name || '';
+        const serial = ast.serial;
+        const category = ast.category || 'Asset';
+        const model = ast.model || '';
         
         const opt = document.createElement('option');
         opt.value = serial;
@@ -2583,7 +1905,6 @@ function loadAssetsForReturnEmployee(empId) {
     });
 }
 
-// Bahar click karne par dropdown band ho jaye
 document.addEventListener('click', function(e) {
     if (!e.target.closest('#return-employee-search') && !e.target.closest('#return-emp-custom-list')) {
         const list = document.getElementById('return-emp-custom-list');
@@ -2591,7 +1912,6 @@ document.addEventListener('click', function(e) {
     }
 });
 
-// --- SUBMIT RETURN ASSET ---
 async function returnAssetToStock(e) {
     if (e) e.preventDefault();
 
@@ -2608,7 +1928,7 @@ async function returnAssetToStock(e) {
         return;
     }
 
-    const emp = employees.find(em => (em.id || em.empId) === empId);
+    const emp = employees.find(em => em.id === empId);
     if (!emp) {
         showCenterAlert("Invalid employee selection!");
         return;
@@ -2616,79 +1936,68 @@ async function returnAssetToStock(e) {
 
     const empAssignedSerials = (emp && Array.isArray(emp.assigned)) ? emp.assigned : [];
     const empAssets = assets.filter(a => {
-        const assignedTo = a.assignedTo || a.employeeId || a.empId;
-        const serial = a.serial || a.assetId || a.asset_id || a.id;
+        const assignedTo = a.assignedTo;
+        const serial = a.serial;
         return assignedTo === empId || empAssignedSerials.includes(serial);
     });
 
     if (selectedVal === 'RETURN_ALL') {
-        // --- BULK RETURN ALL ASSETS ---
         for (const ast of empAssets) {
             ast.assignedTo = null;
-            if (typeof db !== 'undefined') {
-                await db.from('assets').update({ assigned_to: null }).eq('serial_tag', ast.serial);
-            }
+            await db.from('assets').update({ assigned_to: null }).eq('serial_tag', ast.serial);
         }
         
         const count = empAssets.length;
         emp.assigned = [];
-        if (typeof db !== 'undefined') {
-            await db.from('employees').update({ assigned: [] }).eq('id', emp.id);
-        }
+        await db.from('employees').update({ assigned: [] }).eq('id', emp.id);
 
         const logDetails = `All ${count} assets returned to stock from ${emp.name} (${emp.id}) | Reason: ${reason}`;
         const newLog = { 
             timestamp: new Date().toLocaleString(), 
             action: 'Assets Returned (Bulk)', 
             details: logDetails, 
-            user: typeof currentUser !== 'undefined' ? currentUser : 'Admin' 
+            user: sessionStorage.getItem('argos_logged_user') || 'Admin' 
         };
-        if (typeof auditLogs !== 'undefined') auditLogs.push(newLog);
-        if (typeof db !== 'undefined') {
-            await db.from('audit_logs').insert([newLog]);
-        }
+        auditLogs.push(newLog);
+        await db.from('audit_logs').insert([newLog]);
 
         showCenterAlert(`Successfully returned all ${count} assets to stock!`);
     } else {
-        // --- SINGLE ASSET RETURN ---
-        const asset = assets.find(a => (a.serial || a.assetId || a.asset_id || a.id) === selectedVal);
+        const asset = assets.find(a => a.serial === selectedVal);
         if (!asset) {
             showCenterAlert("Selected asset not found!");
             return;
         }
 
-        emp.assigned = (emp.assigned || []).filter(s => s !== asset.serial);
-        if (typeof db !== 'undefined') {
-            await db.from('employees').update({ assigned: emp.assigned }).eq('id', emp.id);
-        }
+    emp.assigned = (emp.assigned || []).filter(s => s !== asset.serial);
+        await db.from('employees').update({ assigned: emp.assigned }).eq('id', emp.id);
 
         asset.assignedTo = null;
-        if (typeof db !== 'undefined') {
-            await db.from('assets').update({ assigned_to: null }).eq('serial_tag', asset.serial);
-        }
+        await db.from('assets').update({ assigned_to: null }).eq('serial_tag', asset.serial);
 
         const logDetails = `Asset ${asset.serial} returned to stock from ${emp.name} (${emp.id}) | Reason: ${reason}`;
         const newLog = { 
             timestamp: new Date().toLocaleString(), 
             action: 'Asset Returned', 
             details: logDetails, 
-            user: typeof currentUser !== 'undefined' ? currentUser : 'Admin' 
+            user: sessionStorage.getItem('argos_logged_user') || 'Admin' 
         };
-        if (typeof auditLogs !== 'undefined') auditLogs.push(newLog);
-        if (typeof db !== 'undefined') {
-            await db.from('audit_logs').insert([newLog]);
-        }
+        auditLogs.push(newLog);
+        await db.from('audit_logs').insert([newLog]);
 
         showCenterAlert("Asset successfully returned to stock!");
     }
 
-    if (typeof saveData === 'function') saveData();
-    if (typeof refreshAllData === 'function') refreshAllData();
+    saveData(); 
+    refreshAllData(); 
 
-    // Form clear karo
     document.getElementById('return-employee-search').value = '';
     document.getElementById('selected-return-emp-id').value = '';
     document.getElementById('return-current-holder').value = '';
     document.getElementById('return-asset-dropdown').innerHTML = '<option value="">First select an employee...</option>';
     document.getElementById('return-reason').value = '';
 }
+
+window.alert = function(message) {
+    showCenterAlert(message);
+};
