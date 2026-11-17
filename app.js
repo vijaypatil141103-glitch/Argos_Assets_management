@@ -37,21 +37,28 @@ window.onload = async function () {
 };
 
 async function logoutSystem() {
-    if (typeof stopQrScanner === 'function') stopQrScanner();
-    await db.auth.signOut();
-    sessionStorage.removeItem('argos_logged_user');
-    showLoginScreen();
-}
-
-db.auth.onAuthStateChange((event, session) => {
-    if (event === 'SIGNED_OUT' || !session) {
-        sessionStorage.removeItem('argos_logged_user');
-        if (typeof showLoginScreen === 'function') {
-            showLoginScreen();
+    try {
+        if (typeof stopQrScanner === 'function') stopQrScanner();
+        
+        // Safe Supabase signout with error handling
+        const supabaseInstance = typeof db !== 'undefined' ? db : (typeof supabaseClient !== 'undefined' ? supabaseClient : null);
+        if (supabaseInstance && supabaseInstance.auth) {
+            await supabaseInstance.auth.signOut();
         }
+    } catch (err) {
+        console.error("Logout error details:", err);
     }
-});
-
+    
+    // Hamesha session clear aur login screen show honi chahiye
+    sessionStorage.removeItem('argos_logged_user');
+    localStorage.removeItem('supabase.auth.token');
+    
+    if (typeof showLoginScreen === 'function') {
+        showLoginScreen();
+    } else {
+        window.location.reload(); // Fallback
+    }
+}
 // --- PART 1: Initialization, State & Navigation ---
 
 let assets = [];
@@ -161,10 +168,14 @@ async function fetchRequestsFromSupabase() {
 
 let auditLogs = [];
 
-// Supabase se Audit Logs fetch karne ka function
+// Supabase se Audit Logs fetch karne ka safe function
 async function fetchAuditLogsFromSupabase() {
     try {
-        const { data, error } = await db.from('audit_logs').select('*');
+        // Check karein ki db ya supabaseClient me se kya available hai
+        const supabaseInstance = typeof db !== 'undefined' ? db : (typeof supabaseClient !== 'undefined' ? supabaseClient : null);
+        if (!supabaseInstance) return;
+
+        const { data, error } = await supabaseInstance.from('audit_logs').select('*');
         if (error) {
             console.error("Supabase error fetching audit logs:", error);
             return;
@@ -235,14 +246,49 @@ function showDashboardApp() {
     refreshAllData();
 }
 
-function switchTab(tabId) {
-    if (tabId === 'settings') { renderAccessEmailsList(); }
-    document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
-    document.querySelectorAll('.sidebar ul li').forEach(el => el.classList.remove('active'));
+function switchTab(tabId, element) {
+    if (tabId === 'settings') { 
+        if (typeof renderAccessEmailsList === 'function') {
+            renderAccessEmailsList(); 
+        }
+    }
+
+    // 1. Saare tab contents se 'active' hatayein aur display none karein
+    document.querySelectorAll('.tab-content').forEach(el => {
+        el.classList.remove('active');
+        el.style.display = 'none'; 
+    });
     
-    const targetTab = document.getElementById('tab-' + tabId);
-    if (targetTab) targetTab.classList.add('active');
-    refreshAllData();
+    // 2. Sidebar items ki active state synchronize karein
+    document.querySelectorAll('.sidebar ul li').forEach(el => {
+        el.classList.remove('active');
+        const onclickAttr = el.getAttribute('onclick') || '';
+        if ((element && element === el) || onclickAttr.includes('${tabId}') || onclickAttr.includes("${tabId}")) {
+            el.classList.add('active');
+        }
+    });
+    
+    // 3. Exact ID match (Dono formats: 'tab-assign' ya direct 'assign')
+    let targetTab = document.getElementById('tab-' + tabId);
+    if (!targetTab) {
+        targetTab = document.getElementById(tabId);
+    }
+    
+    // 4. Fallback: Agar phir bhi na mile toh data-attribute ya class se dhoondhein
+    if (!targetTab) {
+        targetTab = document.querySelector(`[data-tab="${tabId}"], .tab-${tabId}`);
+    }
+
+    if (targetTab) {
+        targetTab.classList.add('active');
+        targetTab.style.display = 'block'; 
+    } else {
+        console.warn('Warning: Target tab content not found for id:', tabId);
+    }
+
+    if (typeof refreshAllData === 'function') {
+        refreshAllData();
+    }
 }
 
 // --- PART 2: Dashboard, Charts, Breakdowns & Audit Logs ---
@@ -774,6 +820,23 @@ async function assignAsset(e) {
     auditLogs.push(newLog);
     await db.from('audit_logs').insert([newLog]);
 
+    // 👇 Agar yeh assignment kisi pending Asset Request ke against ho raha hai, toh ab use Fulfilled karein 👇
+    if (typeof currentProcessingRequestId !== 'undefined' && currentProcessingRequestId !== null) {
+        const reqToUpdate = assetRequests.find(r => r.id === currentProcessingRequestId || assetRequests.indexOf(r) === currentProcessingRequestId);
+        if (reqToUpdate) {
+            reqToUpdate.status = 'Fulfilled';
+            if (reqToUpdate.id && typeof db !== 'undefined') {
+                await db.from('asset_requests').update({ status: 'Fulfilled' }).eq('id', reqToUpdate.id);
+            }
+        }
+        currentProcessingRequestId = null; // Tracking reset karna
+        
+        if (typeof renderRequestsBadge === 'function') {
+            renderRequestsBadge();
+        }
+    }
+    // 👆 Yahan tak naya update hai 👆
+
     saveData(); 
     refreshAllData(); 
     alert("Asset successfully assigned!");
@@ -956,6 +1019,9 @@ function renderRequestsTable() {
     });
 }
 
+// Global variable ya tracking ke liye upar declare kar dein
+let currentProcessingRequestId = null; 
+
 async function fulfillRequest(index) {
     // Reverse array ka index handle karne ke liye sahi index nikalna
     const actualIdx = assetRequests.length - 1 - index;
@@ -963,19 +1029,9 @@ async function fulfillRequest(index) {
 
     if (!req) return;
 
-    // 1. Status ko Fulfilled update karna
-    req.status = 'Fulfilled';
-    
-    if (req.id && typeof db !== 'undefined') {
-        await db.from('asset_requests').update({ status: 'Fulfilled' }).eq('id', req.id);
-    }
-
-    saveData(); 
-    refreshAllData(); 
-    
-    if (typeof renderRequestsBadge === 'function') {
-        renderRequestsBadge();
-    }
+    // 1. ABHI STATUS UPDATE NAHI KARENGE 
+    // Sirf is request ki ID/index ko track kar lenge taaki jab asset assign ho tabhi status change ho.
+    currentProcessingRequestId = req.id || actualIdx;
 
     // 2. Assign tab par switch karna
     switchTab('assign');
@@ -985,7 +1041,7 @@ async function fulfillRequest(index) {
         const empInput = document.getElementById('modal-assign-emp-search');
         const reasonInput = document.getElementById('modal-assign-reason');
 
-        // Employee name aur ID format match karna (jaise: Name (ID: EMP-001) ya empName + ID)
+        // Employee name aur ID format match karna
         if (empInput && req.empName) {
             const matchedEmp = employees.find(e => e.id === req.empId || e.name.toLowerCase() === req.empName.toLowerCase());
             if (matchedEmp) {
@@ -995,14 +1051,14 @@ async function fulfillRequest(index) {
             }
         }
 
-        // Reason mein details ya item approval ka message set karna (jaise "Mouse Approved" ya details)
+        // Reason mein details set karna
         if (reasonInput) {
             let detailsText = req.details ? req.details.toUpperCase() : 'APPROVED';
             reasonInput.value = detailsText + ' - APPROVED';
         }
     }, 100);
 
-    alert("Request approved! Employee and reason populated in Assign form.");
+    alert("Request selected! Please select stock asset and click 'Assign Asset' to complete the approval.");
 }
 
 // --- PART 6: Services, Reports, Settings & Backup ---
@@ -1346,6 +1402,7 @@ async function refreshAllData() {
     if (typeof renderRequestsTable === 'function') renderRequestsTable();
     if (typeof renderServiceTable === 'function') renderServiceTable();
     if (typeof renderAuditLogs === 'function') renderAuditLogs();
+    if (typeof renderDashboardLogs === 'function') renderDashboardLogs();
     if (typeof checkWarrantyAlerts === 'function') checkWarrantyAlerts();
 }
 
@@ -2001,3 +2058,29 @@ async function returnAssetToStock(e) {
 window.alert = function(message) {
     showCenterAlert(message);
 };
+
+function renderDashboardLogs() {
+    const tbody = document.getElementById('dashboard-recent-logs');
+    if (!tbody) return;
+
+    tbody.innerHTML = '';
+    
+    // Safety check taaki undefined hone par code crash na ho
+    const logsArray = (typeof auditLogs !== 'undefined' && Array.isArray(auditLogs)) ? auditLogs : [];
+
+    if (logsArray.length > 0) {
+        const recent = logsArray.slice(0, 8);
+        recent.forEach(log => {
+            const tr = document.createElement('tr');
+            tr.innerHTML = `
+                <td>${log.time || log.created_at || '-'}</td>
+                <td><span class="badge" style="background: #EEF2FF; color: #4338CA;">${log.action || '-'}</span></td>
+                <td>${log.details || '-'}</td>
+            `;
+            tbody.appendChild(tr);
+        });
+    } else {
+        tbody.innerHTML = `<tr><td colspan="3" style="text-align: center; color: var(--text-muted);">No activity recorded.</td></tr>`;
+    }
+}
+
